@@ -1,6 +1,14 @@
 import "./style.css";
+import hljs from "highlight.js/lib/core";
+import python from "highlight.js/lib/languages/python";
+
+hljs.registerLanguage("python", python);
 
 type Cell = { index: number; title: string; source: string; marker_key: string };
+
+/** Manual resize / saved layout: must leave room below `.cell-head` for output/code */
+const CELL_LAYOUT_MIN_W = 220;
+const CELL_LAYOUT_MIN_H = 200;
 
 const apiBase = import.meta.env.DEV ? "" : "http://127.0.0.1:8765";
 
@@ -14,13 +22,110 @@ function wsUrl(): string {
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
+const urlParams = new URLSearchParams(location.search);
+
+const WATCH_PATH_COOKIE = "stonesoup_watch_path";
+/** ~400 days; path is repo-relative, non-sensitive */
+const WATCH_PATH_COOKIE_MAX_AGE = 60 * 60 * 24 * 400;
+
+function readWatchPathCookie(): string {
+  const prefix = `${WATCH_PATH_COOKIE}=`;
+  for (const part of document.cookie.split(";")) {
+    const s = part.trim();
+    if (s.startsWith(prefix)) {
+      const raw = s.slice(prefix.length);
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
+    }
+  }
+  return "";
+}
+
+function saveWatchPathCookie(path: string) {
+  const t = path.trim();
+  if (!t) return;
+  document.cookie = `${WATCH_PATH_COOKIE}=${encodeURIComponent(t)}; Path=/; Max-Age=${WATCH_PATH_COOKIE_MAX_AGE}; SameSite=Lax`;
+}
+
+/** Per-watched-file cell positions/sizes; one cookie JSON object keyed by repo-relative path */
+const CELL_LAYOUTS_COOKIE = "stonesoup_cell_layouts_v1";
+/** Stored alongside numeric cell keys in the same per-path record. */
+const LAYOUT_LOOP_COOKIE_KEY = "__stonesoup_loop__";
+type CellLayoutTuple = [number, number, number, number];
+type CellLayoutsFileMap = Record<string, CellLayoutTuple>;
+
+function parseCellLayoutsCookie(): Record<string, CellLayoutsFileMap> {
+  const prefix = `${CELL_LAYOUTS_COOKIE}=`;
+  for (const part of document.cookie.split(";")) {
+    const s = part.trim();
+    if (!s.startsWith(prefix)) continue;
+    try {
+      return JSON.parse(decodeURIComponent(s.slice(prefix.length))) as Record<string, CellLayoutsFileMap>;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function writeCellLayoutsCookie(all: Record<string, CellLayoutsFileMap>) {
+  document.cookie = `${CELL_LAYOUTS_COOKIE}=${encodeURIComponent(JSON.stringify(all))}; Path=/; Max-Age=${WATCH_PATH_COOKIE_MAX_AGE}; SameSite=Lax`;
+}
+
+function layoutStoragePath(): string {
+  return pathInput.value.trim() || lastPath || "_unset";
+}
+
+let saveCellLayoutTimer = 0;
+function scheduleSaveCellLayouts() {
+  window.clearTimeout(saveCellLayoutTimer);
+  saveCellLayoutTimer = window.setTimeout(() => {
+    saveCellLayoutTimer = 0;
+    const pathKey = layoutStoragePath();
+    if (!pathKey || pathKey === "_unset") return;
+    const rec: CellLayoutsFileMap = {};
+    for (const el of cellsCanvas.querySelectorAll<HTMLElement>(".cell[data-pipeline-cell-drag]")) {
+      const idx = Number(el.dataset.pipelineCellDrag);
+      if (!Number.isInteger(idx)) continue;
+      rec[String(idx)] = [
+        Math.round(parseFloat(el.style.left) || el.offsetLeft),
+        Math.round(parseFloat(el.style.top) || el.offsetTop),
+        Math.round(el.offsetWidth),
+        Math.round(el.offsetHeight),
+      ];
+    }
+    if (loopPaletteManual) {
+      rec[LAYOUT_LOOP_COOKIE_KEY] = [...loopPaletteManual] as CellLayoutTuple;
+    }
+    const all = parseCellLayoutsCookie();
+    all[pathKey] = rec;
+    writeCellLayoutsCookie(all);
+  }, 250);
+}
+
 const defaultPath =
-  new URLSearchParams(location.search).get("path") ||
+  (urlParams.get("path") || "").trim() ||
+  readWatchPathCookie().trim() ||
   "2026-03-23-Embedding/demo.py";
+
+/** Parent folder for the script picker (`?dir=` overrides). */
+function dirnameOfRelPath(p: string): string {
+  const s = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const i = s.lastIndexOf("/");
+  return i <= 0 ? "" : s.slice(0, i);
+}
+
+const scriptPickerDir = urlParams.get("dir") || dirnameOfRelPath(defaultPath);
 
 app.innerHTML = `
   <div class="toolbar">
     <span class="ws-dot" id="ws-dot" title="WebSocket"></span>
+    <select id="path-select" title="Pick a .py file in the folder" aria-label="Script in folder">
+      <option value="">— folder scripts —</option>
+    </select>
     <input type="text" id="path-input" placeholder="path under repo" spellcheck="false" />
     <button type="button" class="primary" id="btn-watch">Watch</button>
     <button type="button" id="btn-reset">Reset kernel</button>
@@ -35,6 +140,7 @@ app.innerHTML = `
   </div>
 `;
 
+const pathSelect = app.querySelector<HTMLSelectElement>("#path-select")!;
 const pathInput = app.querySelector<HTMLInputElement>("#path-input")!;
 const btnWatch = app.querySelector<HTMLButtonElement>("#btn-watch")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
@@ -65,6 +171,62 @@ cellsEl.addEventListener("click", async (e) => {
 
 pathInput.value = defaultPath;
 
+async function populateScriptPicker() {
+  pathSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = scriptPickerDir
+    ? `— ${scriptPickerDir}/ —`
+    : "— set path with folder/ —";
+  pathSelect.appendChild(placeholder);
+
+  if (!scriptPickerDir) {
+    pathSelect.disabled = true;
+    return;
+  }
+
+  pathSelect.disabled = false;
+  try {
+    const r = await fetch(
+      `${apiBase}/api/py-files?${new URLSearchParams({ dir: scriptPickerDir })}`,
+    );
+    const j = (await r.json()) as { files?: string[] };
+    if (!r.ok) throw new Error((j as { detail?: string }).detail || r.statusText);
+    const files = j.files ?? [];
+    for (const rel of files) {
+      const opt = document.createElement("option");
+      opt.value = rel;
+      opt.textContent = rel.includes("/") ? rel.slice(rel.lastIndexOf("/") + 1) : rel;
+      opt.title = rel;
+      pathSelect.appendChild(opt);
+    }
+    if (files.includes(pathInput.value.trim())) {
+      pathSelect.value = pathInput.value.trim();
+    }
+  } catch {
+    const err = document.createElement("option");
+    err.value = "";
+    err.textContent = "(could not list folder)";
+    err.disabled = true;
+    pathSelect.appendChild(err);
+  }
+}
+
+pathSelect.addEventListener("change", () => {
+  const v = pathSelect.value.trim();
+  if (!v) return;
+  pathInput.value = v;
+  void postWatch();
+});
+
+pathInput.addEventListener("change", () => {
+  const v = pathInput.value.trim();
+  const opt = [...pathSelect.options].find((o) => o.value === v);
+  if (opt) pathSelect.value = v;
+});
+
+void populateScriptPicker();
+
 let revision = 0;
 let lastCells: Cell[] = [];
 let lastPath: string | null = null;
@@ -91,6 +253,47 @@ function pruneStaleCells(cellCount: number) {
 }
 /** Last-known cell geometry for reflow heuristics; cleared when watched path or cell count changes. */
 const cellPositions = new Map<number, { left: number; top: number }>();
+/** When non-empty, canvas uses saved left/top/width/height per file cell index (from cookie or after drag). */
+const manualLayoutByCellIdx = new Map<number, { left: number; top: number; width: number; height: number }>();
+/** Saved ↻ Loop palette rect (same cookie file as cells); null = place below grid. */
+let loopPaletteManual: CellLayoutTuple | null = null;
+
+function loadManualLayoutsForPath(pathKey: string) {
+  manualLayoutByCellIdx.clear();
+  loopPaletteManual = null;
+  if (!pathKey || pathKey === "_unset") return;
+  const all = parseCellLayoutsCookie();
+  const rec = all[pathKey];
+  if (!rec) return;
+  for (const [k, v] of Object.entries(rec)) {
+    if (k === LAYOUT_LOOP_COOKIE_KEY) {
+      if (!Array.isArray(v) || v.length !== 4) continue;
+      const [l, t, w, h] = v;
+      if (![l, t, w, h].every((x) => typeof x === "number" && Number.isFinite(x))) continue;
+      loopPaletteManual = [l, t, w, h];
+      continue;
+    }
+    const idx = Number(k);
+    if (!Number.isInteger(idx) || !Array.isArray(v) || v.length !== 4) continue;
+    const [l, t, w, h] = v;
+    if (![l, t, w, h].every((x) => typeof x === "number" && Number.isFinite(x))) continue;
+    manualLayoutByCellIdx.set(idx, { left: l, top: t, width: w, height: h });
+  }
+}
+
+function snapshotCurrentLayoutToManualMap() {
+  manualLayoutByCellIdx.clear();
+  for (const el of cellsCanvas.querySelectorAll<HTMLElement>(".cell[data-pipeline-cell-drag]")) {
+    const idx = Number(el.dataset.pipelineCellDrag);
+    if (!Number.isInteger(idx)) continue;
+    manualLayoutByCellIdx.set(idx, {
+      left: el.offsetLeft,
+      top: el.offsetTop,
+      width: el.offsetWidth,
+      height: el.offsetHeight,
+    });
+  }
+}
 let lastLayoutPath = "";
 let lastLayoutCount = -1;
 /** Last grid column count used for auto layout; when viewport changes columns, we reflow the grid. */
@@ -298,10 +501,20 @@ function setStatus(msg: string) {
   statusEl.textContent = msg;
 }
 
+/** Inline z-index rises so the last-touched / running cell stacks above siblings (default z-index is CSS). */
+let cellZStackCounter = 10;
+function bringCellToFront(cell: HTMLElement) {
+  cellZStackCounter += 1;
+  cell.style.zIndex = String(cellZStackCounter);
+}
+
 function setCellRunningState(index: number, running: boolean) {
   const cell = cellsCanvas.querySelector<HTMLElement>(`.cell[data-pipeline-cell-drag="${index}"]`);
-  if (cell) cell.classList.toggle("cell-running", running);
+  if (!cell) return;
+  cell.classList.toggle("cell-running", running);
+  if (running) bringCellToFront(cell);
 }
+
 
 /** Clear output and show the output strip so streamed stdout/stderr can appear while the cell runs. */
 function prepareCellStreamUi(index: number) {
@@ -553,7 +766,6 @@ const DND_PAYLOAD = "text/plain";
 
 type DndPayload =
   | { kind: "canvas"; cellIndex: number }
-  | { kind: "new-loop" }
   /** Cell or loop step at this path in the pipeline tree */
   | { kind: "move"; fromPath: number[]; fromPipeline: number };
 
@@ -1154,18 +1366,11 @@ function reflowCellStack() {
   const { pad, gap, cellW, cols } = computeCellGridParams();
   const nodes = [...cellsCanvas.querySelectorAll<HTMLElement>(".cell")];
   requestAnimationFrame(() => {
-    packGridRows(nodes, cols, cellW, pad, gap);
-    syncCellPositionsFromDom(nodes);
-    const lp = cellsCanvas.querySelector<HTMLElement>(".loop-palette");
-    if (lp) {
-      let maxBottom = pad;
-      for (const cell of nodes) {
-        maxBottom = Math.max(maxBottom, cell.offsetTop + cell.offsetHeight);
-      }
-      lp.style.left = `${pad}px`;
-      lp.style.top = `${maxBottom + gap}px`;
-      lp.style.width = `${cellW}px`;
+    if (manualLayoutByCellIdx.size === 0) {
+      packGridRows(nodes, cols, cellW, pad, gap);
+      syncCellPositionsFromDom(nodes);
     }
+    positionLoopPaletteBelowCells(nodes, pad, gap, cellW);
     scheduleLayoutAndLines();
   });
 }
@@ -1214,33 +1419,114 @@ function syncCellPositionsFromDom(nodes: HTMLElement[]) {
   });
 }
 
+function positionLoopPaletteBelowCells(nodes: HTMLElement[], pad: number, gap: number, cellW: number) {
+  const lp = cellsCanvas.querySelector<HTMLElement>(".loop-palette");
+  if (!lp) return;
+  let maxBottom = pad;
+  for (const cell of nodes) {
+    maxBottom = Math.max(maxBottom, cell.offsetTop + cell.offsetHeight);
+  }
+  lp.style.left = `${pad}px`;
+  lp.style.top = `${maxBottom + gap}px`;
+  lp.style.width = `${cellW}px`;
+}
+
+function applyLoopPalettePosition(nodes: HTMLElement[], pad: number, gap: number, cellW: number) {
+  const lp = cellsCanvas.querySelector<HTMLElement>(".loop-palette");
+  if (!lp) return;
+  if (loopPaletteManual) {
+    const [l, t, w, h] = loopPaletteManual;
+    lp.classList.add("loop-palette-custom-geometry");
+    lp.style.left = `${Math.max(0, l)}px`;
+    lp.style.top = `${Math.max(0, t)}px`;
+    lp.style.width = `${Math.max(CELL_LAYOUT_MIN_W, w)}px`;
+    if (h >= 40) {
+      lp.style.height = `${h}px`;
+      lp.style.minHeight = "0";
+    } else {
+      lp.style.height = "";
+      lp.style.minHeight = "";
+    }
+  } else {
+    lp.classList.remove("loop-palette-custom-geometry");
+    lp.style.height = "";
+    lp.style.minHeight = "";
+    positionLoopPaletteBelowCells(nodes, pad, gap, cellW);
+  }
+}
+
 function applyFloatingLayout() {
   const { pad, gap, cellW, cols } = computeCellGridParams();
   const nodes = [...cellsCanvas.querySelectorAll<HTMLElement>(".cell")];
-  const needHorizontalReflow = lastLayoutCols !== cols || cellPositions.size === 0;
-
-  if (needHorizontalReflow) {
-    lastLayoutCols = cols;
+  if (manualLayoutByCellIdx.size === 0) {
+    const needHorizontalReflow = lastLayoutCols !== cols || cellPositions.size === 0;
+    if (needHorizontalReflow) {
+      lastLayoutCols = cols;
+    }
+    nodes.forEach((cell, i) => {
+      cell.classList.remove("cell-custom-geometry");
+      cell.dataset.cellIndex = String(i);
+      cell.style.width = `${cellW}px`;
+      cell.style.height = "";
+      cell.style.minHeight = "";
+      cell.style.left = `${pad + (i % cols) * (cellW + gap)}px`;
+      cell.style.top = `${pad}px`;
+    });
+    requestAnimationFrame(() => {
+      packGridRows(nodes, cols, cellW, pad, gap);
+      syncCellPositionsFromDom(nodes);
+      applyLoopPalettePosition(nodes, pad, gap, cellW);
+      scheduleLayoutAndLines();
+    });
+    return;
   }
+
+  lastLayoutCols = cols;
   nodes.forEach((cell, i) => {
     cell.dataset.cellIndex = String(i);
-    cell.style.width = `${cellW}px`;
-    cell.style.left = `${pad + (i % cols) * (cellW + gap)}px`;
-    cell.style.top = `${pad}px`;
-  });
-  requestAnimationFrame(() => {
-    packGridRows(nodes, cols, cellW, pad, gap);
-    syncCellPositionsFromDom(nodes);
-    const lp = cellsCanvas.querySelector<HTMLElement>(".loop-palette");
-    if (lp) {
-      let maxBottom = pad;
-      for (const cell of nodes) {
-        maxBottom = Math.max(maxBottom, cell.offsetTop + cell.offsetHeight);
+    const idx = Number(cell.dataset.pipelineCellDrag);
+    const saved = Number.isInteger(idx) ? manualLayoutByCellIdx.get(idx) : undefined;
+    if (saved) {
+      cell.classList.add("cell-custom-geometry");
+      cell.style.left = `${Math.max(0, saved.left)}px`;
+      cell.style.top = `${Math.max(0, saved.top)}px`;
+      cell.style.width = `${Math.max(CELL_LAYOUT_MIN_W, saved.width)}px`;
+      /* Compact cards save a small height; do not floor to CELL_LAYOUT_MIN_H or every header-only cell becomes a tall empty box after any full re-layout (e.g. toggling Code). */
+      const compact =
+        Number.isInteger(idx) && !expanded.has(idx) && !hasCellBodyOutput(outputs.get(idx));
+      if (compact) {
+        cell.style.height = "";
+        cell.style.minHeight = "0";
+      } else {
+        cell.style.height = `${Math.max(CELL_LAYOUT_MIN_H, saved.height)}px`;
+        cell.style.minHeight = "0";
       }
-      lp.style.left = `${pad}px`;
-      lp.style.top = `${maxBottom + gap}px`;
-      lp.style.width = `${cellW}px`;
+    } else {
+      cell.classList.remove("cell-custom-geometry");
+      cell.style.width = `${cellW}px`;
+      cell.style.height = "";
+      cell.style.minHeight = "";
+      cell.style.left = `${pad}px`;
+      cell.style.top = `${pad}px`;
     }
+  });
+
+  requestAnimationFrame(() => {
+    let stackY = pad;
+    for (const cell of nodes) {
+      const idx = Number(cell.dataset.pipelineCellDrag);
+      if (!Number.isInteger(idx) || manualLayoutByCellIdx.has(idx)) {
+        stackY = Math.max(stackY, cell.offsetTop + cell.offsetHeight + gap);
+      }
+    }
+    for (const cell of nodes) {
+      const idx = Number(cell.dataset.pipelineCellDrag);
+      if (!Number.isInteger(idx) || manualLayoutByCellIdx.has(idx)) continue;
+      cell.style.top = `${stackY}px`;
+      stackY += cell.offsetHeight + gap;
+    }
+    syncCellPositionsFromDom(nodes);
+    applyLoopPalettePosition(nodes, pad, gap, cellW);
     scheduleLayoutAndLines();
   });
 }
@@ -1253,10 +1539,19 @@ function renderCells(cells: Cell[], path: string | null) {
     cellPositions.clear();
     lastLayoutCols = -1;
     if (p !== lastLayoutPath) {
+      if (!p) {
+        manualLayoutByCellIdx.clear();
+      } else {
+        loadManualLayoutsForPath(p);
+      }
       pipelines = loadPipelines(cells.length);
       if (pipelines.length === 0) pipelines = [[]];
       clearLoopExpanded();
     } else {
+      const valid = new Set(cells.map((c) => c.index));
+      for (const k of [...manualLayoutByCellIdx.keys()]) {
+        if (!valid.has(k)) manualLayoutByCellIdx.delete(k);
+      }
       pipelines = pipelines.map((pl) => sanitizeProgram(pl, cells.length));
       clearLoopExpanded();
     }
@@ -1270,11 +1565,11 @@ function renderCells(cells: Cell[], path: string | null) {
     const stale = staleCells.has(c.index);
     const div = document.createElement("div");
     div.className = "cell";
-    div.draggable = true;
+    div.draggable = false;
     div.dataset.pipelineCellDrag = String(c.index);
     div.title = stale
-      ? "Source changed on disk — re-run to clear. Drag into pipeline (anywhere except output and buttons)"
-      : "Drag into pipeline (anywhere except output and buttons)";
+      ? "Source changed on disk — re-run to clear. Drag title bar: move on canvas or drop on pipeline · corner → resize"
+      : "Drag title bar to move · drop on pipeline bar to add · corner to resize";
     if (stale) div.classList.add("cell-stale");
     applyCellColorVars(div, c.index);
     const prev = outputs.get(c.index);
@@ -1284,7 +1579,6 @@ function renderCells(cells: Cell[], path: string | null) {
     div.innerHTML = `
       <div class="cell-body">
         <div class="cell-head">
-          <span class="cell-pipeline-drag" aria-hidden="true">⠿</span>
           <span class="cell-idx" title="Cell index in file (0-based)">${c.index}</span>
           <span class="cell-updated-badge" draggable="false" ${stale ? "" : "hidden"} title="This cell's code changed on disk; run it to clear">Updated</span>
           <span class="cell-title">${escapeHtml(c.title)}</span>
@@ -1293,13 +1587,14 @@ function renderCells(cells: Cell[], path: string | null) {
           <button type="button" class="primary" draggable="false" data-run="${c.index}">Run</button>
         </div>
         <div class="cell-code-panel" style="display:${exp ? "block" : "none"}">
-          <pre class="source full">${escapeHtml(c.source)}</pre>
+          <pre class="source full"><code class="language-python hljs">${highlightPython(c.source)}</code></pre>
         </div>
         <div class="cell-output-block" data-output-block="${c.index}" style="display:${showOut ? "flex" : "none"}">
           <div class="out-label" draggable="false">Output</div>
           <div class="out ${prev && !prev.ok ? "err" : prev ? "ok" : "out-pending"}" draggable="false" data-out="${c.index}" title="Click to copy">${showOut && prev ? escapeHtml(formatOut(prev)) : ""}</div>
         </div>
       </div>
+      <div class="cell-resize-handle" draggable="false" title="Drag corner to resize"></div>
     `;
     cellsCanvas.appendChild(div);
   }
@@ -1328,14 +1623,12 @@ function renderCells(cells: Cell[], path: string | null) {
 
   const loopPal = document.createElement("div");
   loopPal.className = "loop-palette";
-  loopPal.draggable = true;
-  loopPal.dataset.pipelineNewLoop = "1";
-  loopPal.title = "Drag into pipeline to insert an empty loop";
+  loopPal.title = "Drag header to move; drop on pipeline bar to insert a loop";
   loopPal.innerHTML = `
     <div class="loop-palette-head">
       <span class="loop-palette-grip" aria-hidden="true">⠿</span>
       <span class="loop-palette-label">↻ Loop</span>
-      <span class="loop-palette-hint">Drop on pipeline bar</span>
+      <span class="loop-palette-hint">Pipeline</span>
     </div>
   `;
   cellsCanvas.appendChild(loopPal);
@@ -1379,8 +1672,8 @@ function syncCellStaleClassForIndex(index: number) {
   const stale = staleCells.has(index);
   cell.classList.toggle("cell-stale", stale);
   cell.title = stale
-    ? "Source changed on disk — re-run to clear. Drag into pipeline (anywhere except output and buttons)"
-    : "Drag into pipeline (anywhere except output and buttons)";
+    ? "Source changed — re-run to clear. Drag title bar: move or drop on pipeline · corner resize"
+    : "Drag title bar: move or drop on pipeline · corner resize";
   const badge = cell.querySelector<HTMLElement>(".cell-updated-badge");
   if (badge) badge.hidden = !stale;
 }
@@ -1390,6 +1683,14 @@ function escapeHtml(s: string) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function highlightPython(source: string): string {
+  try {
+    return hljs.highlight(source, { language: "python", ignoreIllegals: true }).value;
+  } catch {
+    return escapeHtml(source);
+  }
 }
 
 async function postWatch() {
@@ -1410,6 +1711,7 @@ async function postWatch() {
     outputs.clear();
     expanded.clear();
     staleCells.clear();
+    saveWatchPathCookie(path);
     setStatus(`watching · rev ${j.revision} · ${j.n_cells} cells`);
     revision = j.revision;
   } catch (e) {
@@ -1696,7 +1998,6 @@ function parseDndPayload(dt: DataTransfer): DndPayload | null {
     const x = JSON.parse(raw) as DndPayload;
     if (x.kind === "canvas" && typeof x.cellIndex === "number" && Number.isInteger(x.cellIndex))
       return x;
-    if (x.kind === "new-loop") return { kind: "new-loop" };
     if (x.kind === "move" && Array.isArray(x.fromPath)) {
       const mp = x as { fromPath: number[]; fromPipeline?: number };
       const fromPipeline =
@@ -1709,6 +2010,245 @@ function parseDndPayload(dt: DataTransfer): DndPayload | null {
     return null;
   }
   return null;
+}
+
+type CanvasHeadDragState =
+  | {
+      kind: "cell";
+      el: HTMLElement;
+      pointerId: number;
+      startX: number;
+      startY: number;
+      origL: number;
+      origT: number;
+      cellIndex: number;
+    }
+  | {
+      kind: "loop";
+      el: HTMLElement;
+      pointerId: number;
+      startX: number;
+      startY: number;
+      origL: number;
+      origT: number;
+    };
+type CellResizeGeomState = {
+  el: HTMLElement;
+  pointerId: number;
+  /** Viewport position of cell top-left (border box); width/height = cursor − these so the corner tracks the pointer */
+  vLeft: number;
+  vTop: number;
+};
+
+let canvasHeadDragGeom: CanvasHeadDragState | null = null;
+let cellResizeGeom: CellResizeGeomState | null = null;
+
+function attachCellGeomWindowListeners() {
+  window.addEventListener("pointermove", onCellGeomWindowMove);
+  window.addEventListener("pointerup", onCellGeomWindowEnd);
+  window.addEventListener("pointercancel", onCellGeomWindowEnd);
+}
+
+function detachCellGeomWindowListeners() {
+  window.removeEventListener("pointermove", onCellGeomWindowMove);
+  window.removeEventListener("pointerup", onCellGeomWindowEnd);
+  window.removeEventListener("pointercancel", onCellGeomWindowEnd);
+}
+
+function onCellGeomWindowMove(e: PointerEvent) {
+  if (cellResizeGeom && e.pointerId === cellResizeGeom.pointerId) {
+    e.preventDefault();
+    const { el, vLeft, vTop } = cellResizeGeom;
+    el.style.width = `${Math.max(CELL_LAYOUT_MIN_W, e.clientX - vLeft)}px`;
+    el.style.height = `${Math.max(CELL_LAYOUT_MIN_H, e.clientY - vTop)}px`;
+    el.style.minHeight = "0";
+    relayoutCanvasBounds();
+    return;
+  }
+  if (canvasHeadDragGeom && e.pointerId === canvasHeadDragGeom.pointerId) {
+    e.preventDefault();
+    const { el, startX, startY, origL, origT } = canvasHeadDragGeom;
+    clearPipelineDropHighlights();
+    const pr = document.getElementById("pipeline-row");
+    const z = pr ? hitTestPipelineDropZone(e.clientX, e.clientY) : null;
+    const overPipeline = Boolean(z && pr?.contains(z));
+    if (overPipeline && z) {
+      /* Snap preview to home: release here only adds to pipeline, not a canvas move */
+      el.style.left = `${origL}px`;
+      el.style.top = `${origT}px`;
+      z.classList.add("is-drag-over");
+    } else {
+      el.style.left = `${origL + e.clientX - startX}px`;
+      el.style.top = `${origT + e.clientY - startY}px`;
+    }
+    relayoutCanvasBounds();
+  }
+}
+
+function onCellGeomWindowEnd(e: PointerEvent) {
+  if (cellResizeGeom && e.pointerId === cellResizeGeom.pointerId) {
+    try {
+      cellResizeGeom.el.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    snapshotCurrentLayoutToManualMap();
+    scheduleSaveCellLayouts();
+    cellResizeGeom = null;
+    detachCellGeomWindowListeners();
+    return;
+  }
+  if (canvasHeadDragGeom && e.pointerId === canvasHeadDragGeom.pointerId) {
+    try {
+      canvasHeadDragGeom.el.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    clearPipelineDropHighlights();
+    const pipelineRow = document.getElementById("pipeline-row");
+    const z = pipelineRow ? hitTestPipelineDropZone(e.clientX, e.clientY) : null;
+    let inserted = false;
+    if (z && pipelineRow?.contains(z)) {
+      const loopRaw = z.dataset.dropLoop ?? "";
+      let bodyLoopPath: number[] | null = null;
+      if (loopRaw !== "") {
+        try {
+          bodyLoopPath = JSON.parse(loopRaw) as number[];
+        } catch {
+          /* ignore */
+        }
+      }
+      const at = Number(z.dataset.dropAt);
+      const toPIdx = Number(z.dataset.dropPipeline);
+      if (Number.isInteger(at) && at >= 0 && Number.isInteger(toPIdx) && toPIdx >= 0) {
+        const { el, origL, origT, kind } = canvasHeadDragGeom;
+        el.style.left = `${origL}px`;
+        el.style.top = `${origT}px`;
+        if (kind === "cell") {
+          insertCellInPipeline(canvasHeadDragGeom.cellIndex, bodyLoopPath, at, toPIdx);
+        } else {
+          insertNewLoopInPipeline(bodyLoopPath, at, toPIdx);
+        }
+        inserted = true;
+        clearLoopExpanded();
+        savePipeline();
+        renderPipelineBar();
+        highlightPipelineCells();
+        setStatus("Pipeline updated");
+      }
+    }
+    if (canvasHeadDragGeom.kind === "loop" && !inserted) {
+      const lp = canvasHeadDragGeom.el;
+      loopPaletteManual = [
+        Math.round(parseFloat(lp.style.left) || lp.offsetLeft),
+        Math.round(parseFloat(lp.style.top) || lp.offsetTop),
+        Math.round(lp.offsetWidth),
+        Math.round(Math.max(40, lp.offsetHeight)),
+      ];
+    }
+    snapshotCurrentLayoutToManualMap();
+    scheduleSaveCellLayouts();
+    canvasHeadDragGeom = null;
+    detachCellGeomWindowListeners();
+  }
+}
+
+let cellGeometryBound = false;
+function bindCellGeometryInteractions() {
+  if (cellGeometryBound) return;
+  cellGeometryBound = true;
+
+  cellsCanvas.addEventListener(
+    "pointerdown",
+    (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const t = e.target as HTMLElement;
+      if (!cellsCanvas.contains(t)) return;
+
+      const rh = t.closest(".cell-resize-handle");
+      if (rh) {
+        const cell = rh.closest<HTMLElement>(".cell[data-pipeline-cell-drag]");
+        if (!cell || !cellsCanvas.contains(cell)) return;
+        bringCellToFront(cell);
+        e.preventDefault();
+        e.stopPropagation();
+        if (manualLayoutByCellIdx.size === 0) snapshotCurrentLayoutToManualMap();
+        cell.classList.add("cell-custom-geometry");
+        void cell.offsetWidth;
+        const br = cell.getBoundingClientRect();
+        cellResizeGeom = {
+          el: cell,
+          pointerId: e.pointerId,
+          vLeft: br.left,
+          vTop: br.top,
+        };
+        cell.setPointerCapture(e.pointerId);
+        attachCellGeomWindowListeners();
+        return;
+      }
+
+      const loopHead = t.closest(".loop-palette-head");
+      if (loopHead && cellsCanvas.contains(loopHead)) {
+        if (t.closest("button, a, input, textarea, select")) return;
+        const loopPal = loopHead.closest<HTMLElement>(".loop-palette");
+        if (!loopPal || !cellsCanvas.contains(loopPal)) return;
+        bringCellToFront(loopPal);
+        e.preventDefault();
+        e.stopPropagation();
+        if (manualLayoutByCellIdx.size === 0) snapshotCurrentLayoutToManualMap();
+        canvasHeadDragGeom = {
+          kind: "loop",
+          el: loopPal,
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          origL: parseFloat(loopPal.style.left) || loopPal.offsetLeft,
+          origT: parseFloat(loopPal.style.top) || loopPal.offsetTop,
+        };
+        loopPal.setPointerCapture(e.pointerId);
+        attachCellGeomWindowListeners();
+        return;
+      }
+
+      const head = t.closest(".cell-head");
+      if (!head || !cellsCanvas.contains(head)) return;
+      if (t.closest("button, a, input, textarea, select")) return;
+      const cell = head.closest<HTMLElement>(".cell[data-pipeline-cell-drag]");
+      if (!cell || !cellsCanvas.contains(cell)) return;
+      const cellIndex = Number(cell.dataset.pipelineCellDrag);
+      if (!Number.isInteger(cellIndex)) return;
+      bringCellToFront(cell);
+      e.preventDefault();
+      e.stopPropagation();
+      if (manualLayoutByCellIdx.size === 0) snapshotCurrentLayoutToManualMap();
+      canvasHeadDragGeom = {
+        kind: "cell",
+        el: cell,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        origL: parseFloat(cell.style.left) || cell.offsetLeft,
+        origT: parseFloat(cell.style.top) || cell.offsetTop,
+        cellIndex,
+      };
+      cell.setPointerCapture(e.pointerId);
+      attachCellGeomWindowListeners();
+    },
+    true,
+  );
+
+  cellsCanvas.addEventListener(
+    "pointerdown",
+    (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const tgt = e.target as HTMLElement;
+      const cell = tgt.closest<HTMLElement>(".cell[data-pipeline-cell-drag]");
+      if (cell && cellsCanvas.contains(cell)) bringCellToFront(cell);
+      const loopPal = tgt.closest<HTMLElement>(".loop-palette");
+      if (loopPal && cellsCanvas.contains(loopPal)) bringCellToFront(loopPal);
+    },
+    false,
+  );
 }
 
 /** Browsers often hide `getData` until `drop`; use this for `dragover` feedback. */
@@ -1728,28 +2268,6 @@ function bindPipelineDnD() {
       const t =
         raw instanceof HTMLElement ? raw : (raw as Node).parentElement ?? null;
       if (!t) return;
-      const nlp = t.closest<HTMLElement>("[data-pipeline-new-loop]");
-      if (nlp && cellsCanvas.contains(nlp)) {
-        const payload: DndPayload = { kind: "new-loop" };
-        activePipelineDnd = payload;
-        e.dataTransfer!.setData(DND_PAYLOAD, JSON.stringify(payload));
-        e.dataTransfer!.effectAllowed = "copy";
-        return;
-      }
-      const cg = t.closest<HTMLElement>("[data-pipeline-cell-drag]");
-      if (cg && cellsEl.contains(cg)) {
-        if (t.closest("button, textarea, input, select, .out, .out-label")) {
-          e.preventDefault();
-          return;
-        }
-        const cellIndex = Number(cg.dataset.pipelineCellDrag);
-        if (!Number.isInteger(cellIndex)) return;
-        const payload: DndPayload = { kind: "canvas", cellIndex };
-        activePipelineDnd = payload;
-        e.dataTransfer!.setData(DND_PAYLOAD, JSON.stringify(payload));
-        e.dataTransfer!.effectAllowed = "copy";
-        return;
-      }
       const pl = t.closest<HTMLElement>("[data-pipeline-loop-drag]");
       if (pl && pipelineRow && pipelineRow.contains(pl)) {
         const shell = pl.closest<HTMLElement>(".pipeline-chips");
@@ -1826,8 +2344,6 @@ function bindPipelineDnD() {
 
     if (payload.kind === "canvas") {
       insertCellInPipeline(payload.cellIndex, bodyLoopPath, at, toPIdx);
-    } else if (payload.kind === "new-loop") {
-      insertNewLoopInPipeline(bodyLoopPath, at, toPIdx);
     } else {
       movePipelineStep(payload.fromPath, payload.fromPipeline, bodyLoopPath, toPIdx, at);
     }
@@ -1839,6 +2355,7 @@ function bindPipelineDnD() {
   });
 }
 
+bindCellGeometryInteractions();
 bindPipelineDnD();
 renderPipelineBar();
 connectWs();

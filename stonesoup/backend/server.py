@@ -9,7 +9,7 @@ import queue
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Any
 
@@ -43,6 +43,22 @@ def safe_py_path(path_str: str) -> Path:
         raise HTTPException(status_code=400, detail="Only .py files are allowed")
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+    return candidate
+
+
+def safe_dir_under_root(path_str: str) -> Path:
+    """Resolve a repo-relative (or absolute under root) directory; reject escapes."""
+    root = stonesoup_root()
+    raw = Path(path_str.strip()).expanduser()
+    candidate = (raw.resolve() if raw.is_absolute() else (root / raw).resolve())
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path must be under STONESOUP_ROOT")
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="Directory not found")
+    if not candidate.is_dir():
+        raise HTTPException(status_code=400, detail="Not a directory")
     return candidate
 
 
@@ -187,6 +203,27 @@ async def _startup() -> None:
 @app.get("/api/health")
 async def health() -> dict:
     return {"ok": True}
+
+
+@app.get("/api/py-files")
+async def api_py_files(
+    subdir: str = Query(
+        "",
+        alias="dir",
+        description="Repo-relative directory; lists *.py in that folder only (not recursive).",
+    ),
+) -> dict:
+    """List ``.py`` files directly inside a subdirectory of the repo (for UI dropdown)."""
+    d = subdir.strip()
+    if not d:
+        return {"dir": "", "files": []}
+    folder = safe_dir_under_root(d)
+    root = stonesoup_root()
+    files: list[str] = []
+    for p in sorted(folder.glob("*.py")):
+        if p.is_file():
+            files.append(p.relative_to(root).as_posix())
+    return {"dir": d.replace("\\", "/"), "files": files}
 
 
 @app.post("/api/watch")

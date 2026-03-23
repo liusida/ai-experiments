@@ -31,7 +31,7 @@ npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173/** in Firefox or another browser. Vite proxies `/api` and `/ws` to the backend. Enter a repo-relative path (e.g. `2026-03-23-Embedding/demo.py`) and click **Watch**. Edit the file on disk; cells refresh over **WebSocket** after a short debounce.
+Open **http://127.0.0.1:5173/** in Firefox or another browser. Vite proxies `/api` and `/ws` to the backend. Use the **dropdown** to pick another `*.py` in the same folder as the default script (from the path’s parent directory), or type a repo-relative path in the text field, then click **Watch**. Override the folder used for the dropdown with **`?dir=2026-03-23-Embedding`** (repo-relative). Edit the file on disk; cells refresh over **WebSocket** after a short debounce.
 
 Each cell is a **floating panel** inside the page. Drag **empty space** in the cell canvas (not on a cell or the **↻ Loop** strip) to **pan** (scroll). Layout reflows when the watched path or the number of cells changes.
 
@@ -45,6 +45,7 @@ Optional: **`npm run build`** writes a static site to **`frontend/dist/`** (hand
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/py-files?dir=rel/subfolder` | List `*.py` files **directly** in that repo-relative directory (non-recursive); UI script picker |
 | POST | `/api/watch` | `{"path": "relative/or/abs/under/root.py"}` — start watcher, parse cells |
 | GET | `/api/cells` | Current cells + revision |
 | POST | `/api/run` | `{"cell_index": n, "inject": {...}?}` — optional `inject` merges into kernel globals before the cell |

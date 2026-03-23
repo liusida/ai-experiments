@@ -27,6 +27,21 @@
   --pipeline-flow-row: rgba(255, 255, 255, 0.028);
   --pipeline-flow-row-line: rgba(255, 255, 255, 0.045);
 
+  /* VS Code Default Dark+–style syntax (cell source, highlight.js tokens) */
+  --vs-syntax-default: #d4d4d4;
+  --vs-syntax-comment: #6a9955;
+  --vs-syntax-keyword: #569cd6;
+  --vs-syntax-string: #ce9178;
+  --vs-syntax-number: #b5cea8;
+  --vs-syntax-function: #dcdcaa;
+  --vs-syntax-class: #4ec9b0;
+  --vs-syntax-type: #4ec9b0;
+  --vs-syntax-builtin: #dcdcaa;
+  --vs-syntax-parameter: #9cdcfe;
+  --vs-syntax-self: #569cd6;
+  --vs-syntax-decorator: #dcdcaa;
+  --vs-syntax-escape: #d7ba7d;
+
   font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
   font-size: 13px;
   line-height: 1.45;
@@ -68,6 +83,22 @@ body {
   flex-wrap: wrap;
   margin-bottom: 8px;
   flex-shrink: 0;
+}
+
+.toolbar select {
+  max-width: min(220px, 38vw);
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--vs-border);
+  border-radius: 2px;
+  background: var(--vs-bg-input);
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.toolbar select:disabled {
+  opacity: 0.55;
 }
 
 .toolbar input[type="text"] {
@@ -617,6 +648,96 @@ button.btn-icon svg {
   min-height: 10rem;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
   z-index: 2;
+  isolation: isolate;
+}
+
+/* Fixed size from user resize / cookie: scroll content inside */
+.cell.cell-custom-geometry {
+  /* Floor matches CELL_LAYOUT_MIN_H in main.ts — never collapse below header + readable body */
+  min-height: 200px;
+  min-width: 220px;
+}
+
+.cell.cell-custom-geometry .cell-head {
+  flex-shrink: 0;
+}
+
+.cell.cell-custom-geometry .cell-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* User-sized cell: code fills by default; cap height when output strip is also open */
+.cell.cell-custom-geometry .cell-code-panel {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.cell.cell-custom-geometry
+  .cell-body:has(.cell-output-block[style*="display: flex"])
+  .cell-code-panel[style*="display: block"] {
+  flex: 0 1 auto;
+  max-height: 48%;
+}
+
+.cell.cell-custom-geometry .cell-output-block {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.cell.cell-custom-geometry .cell-output-block .out {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+.cell.cell-custom-geometry .cell-body pre.source.full {
+  max-height: none;
+}
+
+.cell-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: se-resize;
+  z-index: 20;
+  touch-action: none;
+  pointer-events: auto;
+  border-bottom-right-radius: 3px;
+  background: linear-gradient(
+    -45deg,
+    transparent 0%,
+    transparent 40%,
+    color-mix(in srgb, var(--cell-accent) 50%, transparent) 40%,
+    color-mix(in srgb, var(--cell-accent) 50%, transparent) 55%,
+    transparent 55%
+  );
+  opacity: 0.85;
+  box-sizing: content-box;
+}
+
+/* Easier grab than the visible glyph (18px) */
+.cell-resize-handle::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 28px;
+  height: 28px;
+}
+
+.cell-resize-handle:hover {
+  opacity: 1;
 }
 
 .cell.cell-running {
@@ -667,25 +788,63 @@ button.btn-icon svg {
   border-bottom: none;
 }
 
-/* Virtual loop template: sits below file cells; drag into pipeline like a cell. */
+/* Header-only (no code / no output): fixed min resize height doesn’t apply — hide handle */
+.cell.cell-compact .cell-resize-handle {
+  display: none;
+  pointer-events: none;
+}
+
+/* Compact + user-sized: header-only cards stay short; min-height 200px is only for expanded code/output. */
+.cell.cell-custom-geometry.cell-compact {
+  min-height: 0;
+}
+
+.cell.cell-custom-geometry.cell-compact .cell-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: visible;
+  gap: 0;
+}
+
+/* Virtual loop template: same pointer-drag + pipeline drop model as file cells. */
 .loop-palette {
+  --cell-accent: #17becf;
   position: absolute;
   z-index: 2;
-  border: 1px dashed var(--vs-accent);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--cell-accent) 42%, transparent);
   border-radius: 4px;
-  background: rgba(55, 148, 255, 0.07);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
-  cursor: grab;
+  background: var(--vs-bg-side);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
   user-select: none;
-  -webkit-user-drag: element;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.loop-palette-custom-geometry {
+  min-width: 220px;
 }
 
 .loop-palette-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  min-height: 2.5rem;
+  padding: 10px 12px;
+  min-height: 3rem;
+  flex-shrink: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--cell-accent) 22%, transparent) 0%,
+    var(--vs-bg-elevated) 65%
+  );
+  border-bottom: 1px solid color-mix(in srgb, var(--cell-accent) 28%, transparent);
+  cursor: grab;
+  touch-action: none;
+}
+
+.loop-palette-head:active {
+  cursor: grabbing;
 }
 
 .loop-palette-grip {
@@ -698,7 +857,7 @@ button.btn-icon svg {
 .loop-palette-label {
   font-size: 12px;
   font-weight: 700;
-  color: var(--vs-link);
+  color: var(--cell-accent);
 }
 
 .loop-palette-hint {
@@ -722,6 +881,11 @@ button.btn-icon svg {
   border-bottom: 1px solid color-mix(in srgb, var(--cell-accent) 28%, transparent);
   cursor: grab;
   user-select: none;
+  touch-action: none;
+}
+
+.cell-head:active {
+  cursor: grabbing;
 }
 
 .cell-idx {
@@ -740,30 +904,8 @@ button.btn-icon svg {
   line-height: 1.2;
 }
 
-.cell-head:active {
-  cursor: grabbing;
-}
-
 .cell-head button {
   cursor: pointer;
-}
-
-.cell-pipeline-drag {
-  flex-shrink: 0;
-  cursor: grab;
-  font-size: 14px;
-  line-height: 1;
-  color: var(--vs-fg-muted);
-  padding: 2px 4px;
-  margin: 0 -2px 0 0;
-  border-radius: 2px;
-  user-select: none;
-  -webkit-user-drag: element;
-}
-
-.cell-pipeline-drag:hover {
-  color: color-mix(in srgb, var(--cell-accent) 75%, white);
-  background: color-mix(in srgb, var(--cell-accent) 22%, transparent);
 }
 
 .cell-title {
@@ -830,6 +972,113 @@ button.btn-icon svg {
   background: var(--vs-bg-editor);
   border-radius: 2px;
   border: 1px solid var(--vs-border);
+  color: var(--vs-syntax-default);
+}
+
+.cell-body pre.source.full code.hljs {
+  display: block;
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+  line-height: inherit;
+  overflow-x: auto;
+  color: var(--vs-syntax-default);
+}
+
+/* highlight.js tokens — VS Code Default Dark+ palette */
+.cell-body pre.source.full .hljs-keyword,
+.cell-body pre.source.full .hljs-literal {
+  color: var(--vs-syntax-keyword);
+}
+
+.cell-body pre.source.full .hljs-string,
+.cell-body pre.source.full .hljs-regexp {
+  color: var(--vs-syntax-string);
+}
+
+.cell-body pre.source.full .hljs-comment,
+.cell-body pre.source.full .hljs-quote {
+  color: var(--vs-syntax-comment);
+  font-style: italic;
+}
+
+.cell-body pre.source.full .hljs-number {
+  color: var(--vs-syntax-number);
+}
+
+.cell-body pre.source.full .hljs-built_in {
+  color: var(--vs-syntax-builtin);
+}
+
+.cell-body pre.source.full .hljs-type {
+  color: var(--vs-syntax-type);
+}
+
+.cell-body pre.source.full .hljs-title.function_ {
+  color: var(--vs-syntax-function);
+}
+
+.cell-body pre.source.full .hljs-title.class_ {
+  color: var(--vs-syntax-class);
+}
+
+.cell-body pre.source.full .hljs-title.class_.inherited__ {
+  color: var(--vs-syntax-class);
+  opacity: 0.92;
+}
+
+.cell-body pre.source.full .hljs-params {
+  color: var(--vs-syntax-parameter);
+}
+
+.cell-body pre.source.full .hljs-variable.language_ {
+  color: var(--vs-syntax-self);
+}
+
+.cell-body pre.source.full .hljs-meta {
+  color: var(--vs-syntax-decorator);
+}
+
+.cell-body pre.source.full .hljs-subst {
+  color: var(--vs-syntax-default);
+}
+
+.cell-body pre.source.full .hljs-section,
+.cell-body pre.source.full .hljs-doctag,
+.cell-body pre.source.full .hljs-formula {
+  color: var(--vs-syntax-keyword);
+}
+
+.cell-body pre.source.full .hljs-name,
+.cell-body pre.source.full .hljs-attr {
+  color: var(--vs-syntax-parameter);
+}
+
+.cell-body pre.source.full .hljs-bullet,
+.cell-body pre.source.full .hljs-link,
+.cell-body pre.source.full .hljs-symbol {
+  color: var(--vs-syntax-keyword);
+}
+
+.cell-body pre.source.full .hljs-emphasis {
+  font-style: italic;
+}
+
+.cell-body pre.source.full .hljs-strong {
+  font-weight: 600;
+}
+
+.cell-body pre.source.full .hljs-addition {
+  color: var(--vs-ok-fg);
+}
+
+.cell-body pre.source.full .hljs-deletion {
+  color: var(--vs-error-fg);
+}
+
+.cell-body pre.source.full .hljs-char.escape_,
+.cell-body pre.source.full .hljs-escape {
+  color: var(--vs-syntax-escape);
 }
 
 .out-label {

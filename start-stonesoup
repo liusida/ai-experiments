@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Stonesoup shortcut — run from repo root. See stonesoup/README.md
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+usage() {
+  echo "Usage: ./start-stonesoup {backend|frontend|both}" >&2
+  echo "  backend   — FastAPI + kernel (http://127.0.0.1:8765)" >&2
+  echo "  frontend  — Vite UI (http://127.0.0.1:5173), proxies API to backend" >&2
+  echo "  both      — backend in background, frontend in foreground (default)" >&2
+}
+
+cmd="${1:-both}"
+case "$cmd" in
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  backend)
+    exec uv run python -m stonesoup.backend.server
+    ;;
+  frontend)
+    cd "$ROOT/stonesoup/frontend"
+    if [[ ! -d node_modules ]]; then
+      npm install
+    fi
+    exec npm run dev
+    ;;
+  both)
+    uv run python -m stonesoup.backend.server &
+    server_pid=$!
+    cleanup() {
+      kill "$server_pid" 2>/dev/null || true
+      wait "$server_pid" 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
+    cd "$ROOT/stonesoup/frontend"
+    if [[ ! -d node_modules ]]; then
+      npm install
+    fi
+    npm run dev
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac
