@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-experiments"
+version = "0.0.0"
+description = "Personal experiments (Stonesoup cell runner, demos)"
+requires-python = ">=3.11"
+dependencies = [
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+stonesoup = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.24",
+    "watchdog>=4.0",
+    "matplotlib>=3.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["stonesoup"]

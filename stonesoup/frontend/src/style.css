@@ -1,0 +1,896 @@
+/* VS Code Default Dark+ inspired (classic dark) */
+:root {
+  --vs-bg-editor: #1e1e1e;
+  --vs-bg-side: #252526;
+  --vs-bg-input: #3c3c3c;
+  --vs-bg-elevated: #2d2d2d;
+  --vs-border: #3c3c3c;
+  --vs-fg: #cccccc;
+  --vs-fg-dim: #858585;
+  --vs-fg-muted: #6a6a6a;
+  --vs-btn: #3c3c3c;
+  --vs-btn-hover: #464647;
+  --vs-accent: #0e639c;
+  --vs-accent-hover: #1177bb;
+  --vs-link: #3794ff;
+  --vs-list-hover: #2a2d2e;
+  --vs-error-border: #6b2b2b;
+  --vs-error-fg: #f48771;
+  --vs-ok-fg: #89d185;
+  --vs-grid-line: rgba(255, 255, 255, 0.055);
+  --vs-grid-line-major: rgba(255, 255, 255, 0.09);
+  --vs-grid-step: 20px;
+  --vs-grid-major: 100px;
+  /* Pipeline strip: slightly below editor / side so each pipeline reads as its own well */
+  --vs-bg-pipeline: #171717;
+  /* Pipeline canvas: faint row bands (~one chip line) + flow texture */
+  --pipeline-flow-row: rgba(255, 255, 255, 0.028);
+  --pipeline-flow-row-line: rgba(255, 255, 255, 0.045);
+
+  font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--vs-fg);
+  background: var(--vs-bg-side);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+  min-height: 100dvh;
+}
+
+body {
+  margin: 0;
+  min-height: max(100%, 100dvh);
+  height: 100%;
+  background: var(--vs-bg-side);
+}
+
+#app {
+  padding: 8px;
+  height: 100%;
+  min-height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.toolbar input[type="text"] {
+  flex: 1;
+  min-width: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--vs-border);
+  border-radius: 2px;
+  background: var(--vs-bg-input);
+  color: inherit;
+}
+
+button {
+  padding: 6px 10px;
+  border-radius: 2px;
+  border: 1px solid var(--vs-border);
+  background: var(--vs-btn);
+  color: var(--vs-fg);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button:hover {
+  background: var(--vs-btn-hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  border-color: var(--vs-accent-hover);
+  background: var(--vs-accent);
+}
+
+button.primary:hover {
+  background: var(--vs-accent-hover);
+}
+
+button.btn-icon {
+  min-width: 2rem;
+  padding: 6px 8px;
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button.btn-icon svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.status {
+  font-size: 11px;
+  color: var(--vs-fg-dim);
+}
+
+.pipeline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: var(--vs-bg-side);
+  border: 1px solid var(--vs-border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.pipeline-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vs-fg-dim);
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+
+/* Root pipeline only: → then next step; ↵ after last step (line / wrap continues left). */
+.pipeline-flow-sep {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex-shrink: 0;
+  color: var(--vs-fg-muted);
+  opacity: 0.82;
+  pointer-events: none;
+  user-select: none;
+  margin: 0 1px;
+}
+
+.pipeline-flow-sep-next svg {
+  width: 0.95rem;
+  height: 0.55rem;
+  display: block;
+}
+
+/* Root pipeline: compact slot; → centered in the slot (no flex-grow — avoids spreading across the row). */
+.pipeline-flow-between {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 2.75rem;
+  width: 2.75rem;
+  min-height: 2.25rem;
+  align-self: center;
+  box-sizing: border-box;
+}
+
+.pipeline-flow-between .pipeline-drop-zone--between {
+  position: absolute;
+  inset: 0;
+  width: auto !important;
+  flex: none !important;
+  min-height: 0 !important;
+  align-self: auto !important;
+}
+
+.pipeline-flow-between .pipeline-flow-sep-next {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+}
+
+.pipeline-flow-sep-return svg {
+  width: 0.72rem;
+  height: 0.95rem;
+  display: block;
+}
+
+/* Full-width flex break so ↵ sits on the far right above the next pipeline row. */
+.pipeline-flow-wrap-bridge {
+  flex-basis: 100%;
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 4px 4px 0;
+  pointer-events: none;
+  min-height: 0;
+}
+
+.pipeline-flow-continue {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex-shrink: 0;
+  color: var(--vs-fg-muted);
+  opacity: 0.88;
+  pointer-events: none;
+  user-select: none;
+  margin-left: 1.25rem;
+  margin-right: 2px;
+}
+
+.pipeline-flow-continue svg {
+  width: 0.82rem;
+  height: 1.15rem;
+  display: block;
+}
+
+.pipelines-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pipeline-block {
+  min-width: 0;
+  width: 100%;
+}
+
+.pipeline-block-toolbar {
+  margin-bottom: 4px;
+}
+
+.pipeline-strip-remove {
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 8px;
+}
+
+.pipeline-add-strip {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.pipeline-chips-flow {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  align-content: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  width: max-content;
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  /* One row: avoids a huge empty stretch on the first line when the next step wraps */
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-bottom: 2px;
+}
+
+.pipeline-block-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+  align-items: center;
+  align-self: center;
+  justify-self: end;
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.pipeline-chips {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto;
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  padding: 7px 8px 9px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--vs-border);
+  border-left: 3px solid var(--vs-accent);
+  background-color: var(--vs-bg-pipeline);
+  /* Row bands suggest “next line”; arrows suggest left-to-right within a row. */
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='30' viewBox='0 0 44 30'%3E%3Cg opacity='0.14' stroke='%23909090' stroke-width='0.8' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 15h24'/%3E%3Cpath d='M26 11l7 4-7 4'/%3E%3C/g%3E%3C/svg%3E"),
+    repeating-linear-gradient(
+      to bottom,
+      var(--pipeline-flow-row) 0,
+      var(--pipeline-flow-row) 36px,
+      var(--pipeline-flow-row-line) 36px,
+      var(--pipeline-flow-row-line) 37px
+    );
+  background-size: 44px 30px, 100% 37px;
+  background-position: 2px 4px, 0 0;
+}
+
+/* One row with chips (same band height as .pipeline-chip); iteration editor wraps full-width below. */
+.pipeline-nest {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  margin: 0;
+  border: 1px dashed var(--vs-accent);
+  border-radius: 4px;
+  background: rgba(55, 148, 255, 0.06);
+  max-width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+  vertical-align: top;
+}
+
+.pipeline-nest-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.pipeline-nest-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 14rem;
+  padding: 4px 8px;
+  border: 1px solid var(--vs-border);
+  border-radius: 2px;
+  background: var(--vs-bg-input);
+  color: var(--vs-fg);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.pipeline-nest-toggle:hover {
+  background: var(--vs-btn-hover);
+}
+
+.pipeline-nest-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--vs-link);
+  flex-shrink: 0;
+}
+
+.pipeline-nest-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vs-fg-dim);
+  flex-shrink: 0;
+}
+
+.pipeline-nest-chevron {
+  margin-left: auto;
+  color: var(--vs-fg-muted);
+  font-size: 10px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.pipeline-nest-remove {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.pipeline-nest-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-basis: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 8px;
+  border-radius: 2px;
+  border: 1px solid var(--vs-border);
+  background: var(--vs-bg-editor);
+  min-width: min(100%, 14rem);
+}
+
+.pipeline-nest-config-hint {
+  font-size: 10px;
+  color: var(--vs-fg-muted);
+  line-height: 1.35;
+}
+
+.pipeline-nest-done {
+  align-self: flex-start;
+  padding: 4px 12px;
+  font-size: 11px;
+}
+
+.pipeline-nest-iter {
+  width: 100%;
+  max-width: 36rem;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--vs-border);
+  border-radius: 2px;
+  background: var(--vs-bg-side);
+  color: var(--vs-fg);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+  resize: vertical;
+  min-height: 4rem;
+}
+
+.pipeline-nest-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.pipeline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 2px;
+  background: var(--vs-bg-input);
+  border: 1px solid var(--vs-accent);
+  font-size: 11px;
+  max-width: 200px;
+  flex-shrink: 0;
+}
+
+.pipeline-chip.pipeline-chip-cell {
+  --cell-accent: #1f77b4;
+  border-color: color-mix(in srgb, var(--cell-accent) 58%, transparent);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--cell-accent) 32%, var(--vs-bg-input)) 0%,
+    var(--vs-bg-input) 55%
+  );
+}
+
+.pipeline-chip.pipeline-chip-cell .chip-idx {
+  color: var(--cell-accent);
+}
+
+.pipeline-chip.pipeline-chip-cell .pipeline-chip-drag:hover {
+  color: color-mix(in srgb, var(--cell-accent) 82%, white);
+}
+
+.pipeline-chip.pipeline-chip-stale {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--vs-ok-fg) 45%, transparent);
+}
+
+.pipeline-chip .chip-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipeline-chip .chip-idx {
+  color: var(--vs-link);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.pipeline-chip button {
+  padding: 1px 6px;
+  font-size: 10px;
+  min-width: 0;
+}
+
+.pipeline-chip-drag {
+  flex-shrink: 0;
+  cursor: grab;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--vs-fg-muted);
+  padding: 0 2px;
+  user-select: none;
+}
+
+.pipeline-chip-drag:hover {
+  color: var(--vs-link);
+}
+
+.pipeline-loop-drag {
+  flex-shrink: 0;
+  cursor: grab;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--vs-fg-muted);
+  padding: 0 4px 0 0;
+  user-select: none;
+  -webkit-user-drag: element;
+}
+
+.pipeline-loop-drag:hover {
+  color: var(--vs-link);
+}
+
+/* Drop targets between pipeline steps (wider = easier to hit; hit-testing also pads in JS). */
+.pipeline-drop-zone {
+  flex: 0 0 12px;
+  width: 12px;
+  min-height: 2rem;
+  align-self: center;
+  border-radius: 2px;
+  background: transparent;
+  box-sizing: border-box;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Single slot (empty root strip or empty loop body): fill the flow row so drops work anywhere. */
+.pipeline-chips-flow > .pipeline-drop-zone:only-child,
+.pipeline-nest-body > .pipeline-drop-zone:only-child {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 3rem;
+  min-height: 2.25rem;
+}
+
+.pipeline-drop-zone.is-drag-over {
+  background: rgba(55, 148, 255, 0.35);
+  box-shadow: 0 0 0 1px var(--vs-link);
+}
+
+.cell.pipeline-step {
+  outline: 1px solid color-mix(in srgb, var(--cell-accent) 52%, transparent);
+  outline-offset: 0;
+}
+
+.btn-chain {
+  font-size: 11px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  gap: 0;
+}
+
+.cells {
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex: 1 1 0;
+  min-height: 0;
+  padding-bottom: 8px;
+  cursor: default;
+  background-color: var(--vs-bg-editor);
+  /* Graph-paper grid */
+  background-image:
+    linear-gradient(var(--vs-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--vs-grid-line) 1px, transparent 1px),
+    linear-gradient(var(--vs-grid-line-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--vs-grid-line-major) 1px, transparent 1px);
+  background-size:
+    var(--vs-grid-step) var(--vs-grid-step),
+    var(--vs-grid-step) var(--vs-grid-step),
+    var(--vs-grid-major) var(--vs-grid-major),
+    var(--vs-grid-major) var(--vs-grid-major);
+  background-position: -1px -1px;
+}
+
+.cells-canvas {
+  position: relative;
+  min-width: 100%;
+}
+
+.cell {
+  --cell-accent: #1f77b4;
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--cell-accent) 42%, transparent);
+  border-radius: 4px;
+  background: var(--vs-bg-side);
+  overflow: hidden;
+  min-height: 10rem;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+  z-index: 2;
+}
+
+.cell.cell-running {
+  z-index: 5;
+  outline: 2px solid var(--vs-accent);
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vs-accent) 50%, transparent),
+    0 6px 28px rgba(55, 148, 255, 0.22);
+}
+
+.cell.cell-stale {
+  border-color: color-mix(in srgb, var(--vs-ok-fg) 55%, var(--cell-accent));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vs-ok-fg) 35%, transparent),
+    0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
+.cell-updated-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 2px;
+  color: var(--vs-bg-editor);
+  background: color-mix(in srgb, var(--vs-ok-fg) 88%, #000);
+  border: 1px solid color-mix(in srgb, var(--vs-ok-fg) 70%, transparent);
+}
+
+.cell-updated-badge[hidden] {
+  display: none !important;
+}
+
+/* Code hidden + no stdout/stderr: one strip — toolbar is inside `.cell-body`, no empty body gap. */
+.cell.cell-compact {
+  min-height: 0;
+}
+
+.cell.cell-compact .cell-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  gap: 0;
+}
+
+.cell.cell-compact .cell-head {
+  border-bottom: none;
+}
+
+/* Virtual loop template: sits below file cells; drag into pipeline like a cell. */
+.loop-palette {
+  position: absolute;
+  z-index: 2;
+  border: 1px dashed var(--vs-accent);
+  border-radius: 4px;
+  background: rgba(55, 148, 255, 0.07);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-drag: element;
+}
+
+.loop-palette-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  min-height: 2.5rem;
+}
+
+.loop-palette-grip {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--vs-fg-muted);
+}
+
+.loop-palette-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--vs-link);
+}
+
+.loop-palette-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--vs-fg-muted);
+  font-weight: 500;
+}
+
+.cell-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  min-height: 3rem;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--cell-accent) 22%, transparent) 0%,
+    var(--vs-bg-elevated) 65%
+  );
+  border-bottom: 1px solid color-mix(in srgb, var(--cell-accent) 28%, transparent);
+  cursor: grab;
+  user-select: none;
+}
+
+.cell-idx {
+  flex-shrink: 0;
+  min-width: 1.5rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--cell-accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cell-accent) 35%, transparent);
+  /* Matches pipeline chip index (tab20 accent) */
+  color: var(--cell-accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.cell-head:active {
+  cursor: grabbing;
+}
+
+.cell-head button {
+  cursor: pointer;
+}
+
+.cell-pipeline-drag {
+  flex-shrink: 0;
+  cursor: grab;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--vs-fg-muted);
+  padding: 2px 4px;
+  margin: 0 -2px 0 0;
+  border-radius: 2px;
+  user-select: none;
+  -webkit-user-drag: element;
+}
+
+.cell-pipeline-drag:hover {
+  color: color-mix(in srgb, var(--cell-accent) 75%, white);
+  background: color-mix(in srgb, var(--cell-accent) 22%, transparent);
+}
+
+.cell-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--vs-fg);
+  line-height: 1.35;
+  white-space: normal;
+  overflow: visible;
+  word-break: break-word;
+}
+
+.cell-body {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+
+.cell-body > .cell-code-panel,
+.cell-body > .cell-output-block {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.cell-body > .cell-code-panel {
+  padding-bottom: 10px;
+}
+
+.cell-body > .cell-output-block {
+  padding-bottom: 10px;
+}
+
+.cell-body pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--vs-fg-dim);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.cell-code-panel {
+  min-height: 0;
+}
+
+.cell-output-block {
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.cell-output-block .out-label {
+  margin-top: 0;
+}
+
+.cell-body pre.source.full {
+  max-height: min(28vh, 11rem);
+  overflow-y: auto;
+  padding: 5px 6px;
+  background: var(--vs-bg-editor);
+  border-radius: 2px;
+  border: 1px solid var(--vs-border);
+}
+
+.out-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vs-fg-dim);
+  margin-top: 4px;
+}
+
+.out {
+  padding: 8px 10px;
+  border-radius: 2px;
+  background: var(--vs-bg-editor);
+  border: 1px solid var(--vs-border);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 7rem;
+  max-height: min(55vh, 28rem);
+  overflow-y: auto;
+  cursor: copy;
+}
+
+.out.out-streaming {
+  border-color: color-mix(in srgb, var(--vs-accent) 45%, var(--vs-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vs-accent) 12%, transparent);
+}
+
+.out.out-copied {
+  box-shadow: 0 0 0 1px var(--vs-link);
+  transition: box-shadow 0.15s ease;
+}
+
+.out.out-pending:empty::before {
+  content: "Click Run to execute this cell.";
+  color: var(--vs-fg-muted);
+  font-style: italic;
+}
+
+.out.err {
+  border-color: var(--vs-error-border);
+  color: var(--vs-error-fg);
+}
+
+.out.ok {
+  color: var(--vs-ok-fg);
+}
+
+.toggle {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--vs-fg-muted);
+  display: inline-block;
+}
+
+.ws-dot.on {
+  background: var(--vs-ok-fg);
+}
