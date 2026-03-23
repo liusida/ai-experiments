@@ -1,0 +1,139 @@
+EleutherAI/pythia-1b * :
+`                                                           `
+`                                                          `
+`                       `
+
+HuggingFaceTB/SmolLM2-1.7B-Instruct :
+`<gh_stars>`
+`<jupyter_text>`
+`<jupyter_output>`
+
+Qwen/Qwen2.5-0.5B-Instruct * :
+` و`
+` и`
+` очень`
+
+Qwen/Qwen2.5-3B-Instruct * :
+`<|im_end|>`
+`<|im_start|>`
+`꿸`
+
+Qwen/Qwen3-0.6B * :
+`∅`
+`∅`
+`∅`
+
+Qwen/Qwen3-1.7B * :
+`∅`
+`∅`
+`∅`
+
+Qwen/Qwen3-4B-Instruct-2507 * :
+`</tool_response>`
+`ᕛ`
+`ﴀ`
+
+Qwen/Qwen3.5-0.8B * :
+`<|vision_start|>`
+` �`
+` �`
+
+Qwen/Qwen3.5-2B * :
+` แต่`
+` �`
+` ಸ`
+
+TinyLlama/TinyLlama-1.1B-Chat-v1.0 :
+`Q`
+`z`
+`�`
+
+allenai/OLMo-1B-hf * :
+`\n                                          `
+`                                                               `
+`\n                       `
+
+allenai/OLMo-2-0425-1B * :
+`��加`
+`∅`
+`∅`
+
+bigcode/starcoder2-3b :
+`\n\n\n\n   `
+`\n\n\n   `
+`\n\n\n       `
+
+bigscience/bloom-1b7 * :
+`ðes/`
+`سانچہ:قرآن-سورہ`
+` /əz`
+
+bigscience/bloom-560m * :
+`ʔk̚`
+` 頭條標題`
+`ʁjɔ̃\\`
+
+distilgpt2 :
+` 12`
+`\n\n`
+` un`
+
+facebook/opt-1.3b * :
+` �`
+`Yeah`
+`Although`
+
+facebook/opt-2.7b * :
+` �`
+`Honestly`
+`Yeah`
+
+ibm-granite/granite-3.1-2b-instruct :
+`<|tool_call|>`
+`<|start_of_role|>`
+`<|end_of_role|>`
+
+meta-llama/Llama-3.2-1B-Instruct :
+` -->\r\n\r\n`
+`ЎыџN`
+` присутств`
+
+meta-llama/Llama-3.2-3B-Instruct :
+`artisanlib`
+`useRal`
+`krvldkf`
+
+microsoft/phi-2 * :
+`∅`
+`∅`
+`∅`
+
+openai-community/gpt2-large :
+`.`
+`,`
+` in`
+
+openai-community/gpt2-medium :
+` in`
+`,`
+` to`
+
+openai-community/gpt2-xl :
+`.`
+` in`
+`,`
+
+stabilityai/stablelm-2-1_6b * :
+`∅`
+`088`
+`∅`
+
+tiiuae/falcon-rw-1b * :
+` hype`
+` classic`
+` chairman`
+
+togethercomputer/RedPajama-INCITE-Base-3B-v1 * :
+`\n              `
+`∅`
+`�`
