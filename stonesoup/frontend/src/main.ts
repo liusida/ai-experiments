@@ -525,7 +525,7 @@ function prepareCellStreamUi(index: number) {
   }
   setCellOutputBlockVisible(index, true);
   syncCellCompactClassForIndex(index);
-  reflowCellStack();
+  applyFloatingLayout();
 }
 
 function appendCellStreamChunk(index: number, text: string) {
@@ -1361,20 +1361,6 @@ function scheduleLayoutAndLines() {
   });
 }
 
-/** Re-pack vertical positions after cell heights change (e.g. compact ↔ expanded) without resetting horizontal grid. */
-function reflowCellStack() {
-  const { pad, gap, cellW, cols } = computeCellGridParams();
-  const nodes = [...cellsCanvas.querySelectorAll<HTMLElement>(".cell")];
-  requestAnimationFrame(() => {
-    if (manualLayoutByCellIdx.size === 0) {
-      packGridRows(nodes, cols, cellW, pad, gap);
-      syncCellPositionsFromDom(nodes);
-    }
-    positionLoopPaletteBelowCells(nodes, pad, gap, cellW);
-    scheduleLayoutAndLines();
-  });
-}
-
 function computeCellGridParams(): { pad: number; gap: number; cellW: number; cols: number } {
   const pad = 12;
   const gap = 28;
@@ -1492,14 +1478,18 @@ function applyFloatingLayout() {
       cell.style.top = `${Math.max(0, saved.top)}px`;
       cell.style.width = `${Math.max(CELL_LAYOUT_MIN_W, saved.width)}px`;
       /* Compact cards save a small height; do not floor to CELL_LAYOUT_MIN_H or every header-only cell becomes a tall empty box after any full re-layout (e.g. toggling Code). */
+      const showOutForLayout =
+        hasCellBodyOutput(outputs.get(idx)) || isOutputStripVisible(idx);
       const compact =
-        Number.isInteger(idx) && !expanded.has(idx) && !hasCellBodyOutput(outputs.get(idx));
+        Number.isInteger(idx) && !expanded.has(idx) && !showOutForLayout;
+      /* Do not set inline min-height: 0 here — it overrides `.cell-custom-geometry { min-height: 200px }` and
+         sticks until the next full layout, so cells collapse after pipeline runs. Let classes control min-height. */
       if (compact) {
         cell.style.height = "";
-        cell.style.minHeight = "0";
+        cell.style.minHeight = "";
       } else {
         cell.style.height = `${Math.max(CELL_LAYOUT_MIN_H, saved.height)}px`;
-        cell.style.minHeight = "0";
+        cell.style.minHeight = "";
       }
     } else {
       cell.classList.remove("cell-custom-geometry");
@@ -1657,11 +1647,20 @@ function setCellOutputBlockVisible(index: number, visible: boolean) {
   if (block) block.style.display = visible ? "flex" : "none";
 }
 
+/** True while the output strip is shown (running/streaming or real output), even if `outputs` is not updated yet. */
+function isOutputStripVisible(index: number): boolean {
+  const block = cellsEl.querySelector<HTMLElement>(`[data-output-block="${index}"]`);
+  if (!block) return false;
+  const d = (block.style.display || "").toLowerCase();
+  return d === "flex" || d === "block";
+}
+
 /** Toolbar lives in `.cell-body`; compact = no code + no output so the card is header-only. */
 function syncCellCompactClassForIndex(index: number) {
   const cell = cellsCanvas.querySelector<HTMLElement>(`.cell[data-pipeline-cell-drag="${index}"]`);
   if (!cell) return;
-  const showOut = hasCellBodyOutput(outputs.get(index));
+  const showOut =
+    hasCellBodyOutput(outputs.get(index)) || isOutputStripVisible(index);
   const exp = expanded.has(index);
   cell.classList.toggle("cell-compact", !exp && !showOut);
 }
@@ -1750,7 +1749,7 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
       outEl.textContent = visible ? formatOut(nextOut) : "";
     }
     syncCellCompactClassForIndex(index);
-    reflowCellStack();
+    applyFloatingLayout();
     if (j.ok) {
       staleCells.delete(index);
       syncCellStaleClassForIndex(index);
@@ -1766,7 +1765,7 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
       outEl.textContent = String(e);
     }
     syncCellCompactClassForIndex(index);
-    reflowCellStack();
+    applyFloatingLayout();
   } finally {
     setCellRunningState(index, false);
     if (btn) btn.disabled = false;
@@ -1790,7 +1789,7 @@ async function resetKernel() {
       const idx = Number(cell.dataset.pipelineCellDrag);
       if (Number.isInteger(idx)) syncCellCompactClassForIndex(idx);
     });
-    reflowCellStack();
+    applyFloatingLayout();
     setStatus(`rev ${revision} · kernel reset`);
   } catch (e) {
     setStatus(String(e));

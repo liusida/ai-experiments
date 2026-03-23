@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import torch
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import torch
 from torch import nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
