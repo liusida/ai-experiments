@@ -12,9 +12,9 @@ Output shape (per model)::
 ``*`` means ``len(AutoTokenizer) !=`` embedding row count in the ``.pt`` (ids may not match strings).
 ``!`` means tokenizer load failed (see following line).
 
-Writes ``2026-03-23-Embedding/reports/least_norm_tokens.txt``. Run from repo root::
+Writes ``experiments/2026-03-23-Embedding/reports/least_norm_tokens.txt``. Run from repo root::
 
-    uv run python 2026-03-23-Embedding/embedding_least_norm_tokens.py
+    uv run python experiments/2026-03-23-Embedding/embedding_least_norm_tokens.py
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 LAYER_DIR = REPO_ROOT / "data" / "embedding-layers"
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 OUT_FILE = REPORTS_DIR / "least_norm_tokens.txt"

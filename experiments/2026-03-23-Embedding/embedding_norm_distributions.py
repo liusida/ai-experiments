@@ -3,9 +3,9 @@
 
 Caches are written by ``demo.py`` (``weight`` tensor + optional ``model_name``). Run from repo root::
 
-    uv run python 2026-03-23-Embedding/embedding_norm_distributions.py
+    uv run python experiments/2026-03-23-Embedding/embedding_norm_distributions.py
 
-Or open in Stonesoup and run cells. Figures go under ``2026-03-23-Embedding/plots/``.
+Or open in Stonesoup and run cells. Figures go under ``experiments/2026-03-23-Embedding/plots/``.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 LAYER_DIR = REPO_ROOT / "data" / "embedding-layers"
 PLOTS_DIR = Path(__file__).resolve().parent / "plots"
 OUT_NAME = "embedding_norm_distributions_cache_layers.png"

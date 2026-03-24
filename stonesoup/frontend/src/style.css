@@ -66,6 +66,7 @@ body {
 }
 
 #app {
+  position: relative;
   padding: 8px;
   height: 100%;
   min-height: 100%;
@@ -86,7 +87,6 @@ body {
 }
 
 .toolbar select {
-  max-width: min(220px, 38vw);
   min-width: 0;
   padding: 5px 8px;
   border: 1px solid var(--vs-border);
@@ -95,6 +95,27 @@ body {
   color: inherit;
   font-family: inherit;
   font-size: inherit;
+}
+
+.toolbar .script-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.toolbar .script-picker select#folder-select {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: min(200px, 40vw);
+  max-width: min(380px, 50vw);
+}
+
+.toolbar .script-picker select#file-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
 }
 
 .toolbar select:disabled {
@@ -155,16 +176,42 @@ button.btn-icon svg {
   flex-shrink: 0;
 }
 
-.status {
-  font-size: 11px;
-  color: var(--vs-fg-dim);
+.status-toast {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 10000;
+  max-width: min(440px, calc(100% - 20px));
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--vs-fg);
+  background: var(--vs-bg-side);
+  border: 1px solid var(--vs-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease,
+    visibility 0.2s;
+  word-break: break-word;
+}
+
+.status-toast.status-toast--visible {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .pipeline-row {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 8px;
+  gap: 12px;
   margin-bottom: 8px;
   padding: 8px 10px;
   background: var(--vs-bg-side);
@@ -173,12 +220,29 @@ button.btn-icon svg {
   flex-shrink: 0;
 }
 
+.pipeline-aside {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 4.5rem;
+  max-width: 6.75rem;
+}
+
 .pipeline-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--vs-fg-dim);
   flex-shrink: 0;
-  padding-top: 4px;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.loop-palette-slot {
+  flex-shrink: 0;
+  min-width: 0;
 }
 
 /* Root pipeline only: → then next step; ↵ after last step (line / wrap continues left). */
@@ -209,7 +273,7 @@ button.btn-icon svg {
   flex: 0 0 2.75rem;
   width: 2.75rem;
   min-height: 2.25rem;
-  align-self: center;
+  align-self: stretch;
   box-sizing: border-box;
 }
 
@@ -295,23 +359,32 @@ button.btn-icon svg {
   justify-content: flex-start;
 }
 
+/* Horizontal scroll only on this shell so inner flow can use overflow: visible (avoids y-clipping drop highlights). */
+.pipeline-chips-flow-scroll {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
+  align-self: stretch;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 4px 0 6px;
+  box-sizing: border-box;
+}
+
 .pipeline-chips-flow {
   display: flex;
   flex-wrap: nowrap;
-  align-items: center;
+  align-items: stretch;
   align-content: flex-start;
   justify-content: flex-start;
   gap: 6px;
   min-width: 0;
-  max-width: 100%;
   width: max-content;
-  grid-column: 1;
-  grid-row: 1;
-  justify-self: start;
-  /* One row: avoids a huge empty stretch on the first line when the next step wraps */
-  overflow-x: auto;
-  overflow-y: visible;
-  padding-bottom: 2px;
+  max-width: none;
+  overflow: visible;
+  box-sizing: border-box;
 }
 
 .pipeline-block-actions {
@@ -329,7 +402,7 @@ button.btn-icon svg {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto;
-  align-items: center;
+  align-items: stretch;
   column-gap: 8px;
   min-width: 0;
   width: 100%;
@@ -475,10 +548,26 @@ button.btn-icon svg {
 .pipeline-nest-body {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: stretch;
   gap: 6px;
   flex: 0 1 auto;
   min-width: 0;
+}
+
+.pipeline-nest-body > .pipeline-drop-zone {
+  align-self: stretch;
+}
+
+.pipeline-nest-body > .pipeline-nest {
+  align-self: center;
+}
+
+.pipeline-nest-body > .pipeline-flow-between {
+  align-self: stretch;
+}
+
+.pipeline-nest-body > .pipeline-flow-sep {
+  align-self: center;
 }
 
 .pipeline-chip {
@@ -492,6 +581,11 @@ button.btn-icon svg {
   font-size: 11px;
   max-width: 200px;
   flex-shrink: 0;
+  align-self: center;
+}
+
+.pipeline-chips-flow > .pipeline-nest {
+  align-self: center;
 }
 
 .pipeline-chip.pipeline-chip-cell {
@@ -567,8 +661,8 @@ button.btn-icon svg {
 .pipeline-drop-zone {
   flex: 0 0 12px;
   width: 12px;
-  min-height: 2rem;
-  align-self: center;
+  min-height: 0;
+  align-self: stretch;
   border-radius: 2px;
   background: transparent;
   box-sizing: border-box;
@@ -584,9 +678,10 @@ button.btn-icon svg {
   min-height: 2.25rem;
 }
 
+/* Inset ring so the highlight is not clipped by overflow:auto ancestors (outer box-shadow was cut off). */
 .pipeline-drop-zone.is-drag-over {
   background: rgba(55, 148, 255, 0.35);
-  box-shadow: 0 0 0 1px var(--vs-link);
+  box-shadow: inset 0 0 0 1px var(--vs-link);
 }
 
 .cell.pipeline-step {
@@ -601,6 +696,7 @@ button.btn-icon svg {
 }
 
 .workspace {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
@@ -806,24 +902,40 @@ button.btn-icon svg {
   gap: 0;
 }
 
-/* Virtual loop template: same pointer-drag + pipeline drop model as file cells. */
+/* Loop template: compact chip under “Pipelines”; drag uses `position: fixed` in JS. */
 .loop-palette {
   --cell-accent: #17becf;
-  position: absolute;
-  z-index: 2;
   display: flex;
   flex-direction: column;
   border: 1px solid color-mix(in srgb, var(--cell-accent) 42%, transparent);
   border-radius: 4px;
   background: var(--vs-bg-side);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
   user-select: none;
   isolation: isolate;
   overflow: hidden;
 }
 
-.loop-palette-custom-geometry {
-  min-width: 220px;
+.loop-palette.loop-palette--slot {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: 100%;
+  max-width: 6.75rem;
+  z-index: 1;
+}
+
+.loop-palette.loop-palette--dragging {
+  z-index: 2000;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+}
+
+.loop-palette.loop-palette--slot .loop-palette-head {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  padding: 6px 7px;
+  min-height: 0;
+  gap: 4px;
 }
 
 .loop-palette-head {
@@ -849,9 +961,13 @@ button.btn-icon svg {
 
 .loop-palette-grip {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: 11px;
   line-height: 1;
   color: var(--vs-fg-muted);
+}
+
+.loop-palette.loop-palette--slot .loop-palette-grip {
+  font-size: 10px;
 }
 
 .loop-palette-label {
@@ -860,19 +976,19 @@ button.btn-icon svg {
   color: var(--cell-accent);
 }
 
-.loop-palette-hint {
-  margin-left: auto;
+.loop-palette.loop-palette--slot .loop-palette-label {
   font-size: 10px;
-  color: var(--vs-fg-muted);
-  font-weight: 500;
+  font-weight: 700;
+  line-height: 1.2;
 }
 
 .cell-head {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
   padding: 10px 12px;
-  min-height: 3rem;
+  min-height: 0;
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--cell-accent) 22%, transparent) 0%,
@@ -882,6 +998,21 @@ button.btn-icon svg {
   cursor: grab;
   user-select: none;
   touch-action: none;
+}
+
+.cell-head-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cell-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .cell-head:active {
@@ -906,6 +1037,22 @@ button.btn-icon svg {
 
 .cell-head button {
   cursor: pointer;
+}
+
+.cell-run-input {
+  flex: 1 1 160px;
+  min-width: 100px;
+  max-width: min(520px, 100%);
+  padding: 4px 8px;
+  border: 1px solid var(--vs-border);
+  border-radius: 3px;
+  background: var(--vs-bg-input);
+  color: var(--vs-fg);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: text;
+  user-select: text;
 }
 
 .cell-title {
@@ -1142,4 +1289,166 @@ button.btn-icon svg {
 
 .ws-dot.on {
   background: var(--vs-ok-fg);
+}
+
+/* --- kernel variables: float over cells (bottom-left), no layout strip --- */
+
+.kernel-vars-dock {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
+  max-width: min(520px, calc(100% - 12px));
+}
+
+.kernel-vars-dock > * {
+  pointer-events: auto;
+}
+
+.kernel-vars-dock:not(.collapsed) {
+  width: min(520px, calc(100% - 12px));
+}
+
+.kernel-vars-dock.collapsed .kernel-vars-panel {
+  display: none;
+}
+
+.kernel-vars-dock:not(.collapsed) .kernel-vars-chip {
+  display: none;
+}
+
+.kernel-vars-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--vs-border);
+  border-radius: 6px;
+  background: var(--vs-bg-side);
+  box-shadow:
+    0 4px 24px color-mix(in srgb, #000 28%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--vs-border) 50%, transparent);
+  overflow: hidden;
+  /* Fixed height so flex:1 on .kernel-vars-scroll gets space */
+  height: min(260px, 32vh);
+  min-height: 120px;
+  max-height: min(260px, 32vh);
+}
+
+.kernel-vars-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vs-border);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--vs-bg-side) 88%, var(--vs-border));
+  border-radius: 6px 6px 0 0;
+}
+
+.kernel-vars-title {
+  flex: 1;
+  font-weight: 600;
+  color: var(--vs-fg-dim);
+}
+
+.kernel-vars-scroll {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 4px 6px;
+}
+
+.kernel-vars-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.kernel-vars-table th {
+  text-align: left;
+  padding: 4px 6px;
+  color: var(--vs-fg-muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--vs-bg-side);
+  border-bottom: 1px solid var(--vs-border);
+}
+
+.kernel-vars-table td {
+  padding: 3px 6px;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 70%, transparent);
+}
+
+.kernel-vars-name {
+  font-weight: 500;
+  color: var(--vs-syntax-parameter);
+  white-space: nowrap;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kernel-vars-type {
+  color: var(--vs-fg-muted);
+  white-space: nowrap;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kernel-vars-preview {
+  word-break: break-word;
+  color: var(--vs-fg);
+}
+
+.kernel-vars-empty {
+  margin: 8px 6px;
+  font-size: 12px;
+  color: var(--vs-fg-muted);
+  font-style: italic;
+}
+
+.kernel-vars-chip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--vs-border);
+  background: var(--vs-bg-side);
+  color: var(--vs-fg);
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  box-shadow:
+    0 2px 12px color-mix(in srgb, #000 22%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--vs-border) 45%, transparent);
+}
+
+.kernel-vars-chip:hover {
+  background: var(--vs-btn-hover);
+}
+
+.kernel-vars-chip-icon {
+  opacity: 0.85;
+  letter-spacing: -0.05em;
+}
+
+.kernel-vars-chip-count {
+  min-width: 1.25em;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vs-fg-dim);
 }

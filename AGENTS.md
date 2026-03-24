@@ -11,4 +11,6 @@
 
 Local tool under [`stonesoup/`](stonesoup/): watches a `.py` file for `# %%` cells, **FastAPI** kernel on port **8765**, **Vite** UI in a browser. See [`stonesoup/README.md`](stonesoup/README.md). From repo root run **`uv pip install -e ".[stonesoup]"`** so `stonesoup` is importable without `PYTHONPATH`.
 
+On import, the kernel sets **PyTorch CUDA memory fraction** to **0.8** by default (unified memory / OS headroom). Override with **`STONESOUP_CUDA_MEMORY_FRACTION`** or **`AI_TORCH_CUDA_MEMORY_FRACTION`** (use **`1`** to relax).
+
 When authoring experiment scripts to watch in Stonesoup, follow [`EXPERIMENT_PYTHON.md`](EXPERIMENT_PYTHON.md). **Do not run** those `.py` files to verify after editing unless the user asks—runs can be very slow (HF, big data); the user runs cells in the Stonesoup UI.

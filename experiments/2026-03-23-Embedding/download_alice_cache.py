@@ -9,8 +9,8 @@ From repo root, **curl** (no Python)::
 
 This script::
 
-    uv run python 2026-03-23-Embedding/download_alice_cache.py
-    uv run python 2026-03-23-Embedding/download_alice_cache.py --force
+    uv run python experiments/2026-03-23-Embedding/download_alice_cache.py
+    uv run python experiments/2026-03-23-Embedding/download_alice_cache.py --force
 """
 
 from __future__ import annotations
@@ -29,22 +29,21 @@ SOURCE_URLS: tuple[str, ...] = (
     "http://www.gutenberg.org/files/11/11-0.txt",
 )
 HTTP_UA = "StonesoupAliceCacheCLI/1.0 (+https://github.com/liusida/ai-experiments)"
-CONNECT_S = 90.0
-READ_S = 240.0
+# Single float: urllib/http.client passes timeout to socket.settimeout (no tuple support here).
+URL_TIMEOUT_S = 240.0
 MIN_BYTES = 5000
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_OUT = REPO_ROOT / "data" / "text" / "gutenberg_11-0_alice_in_wonderland.txt"
 
 
 def fetch_first_ok() -> tuple[bytes, str]:
-    timeout = (CONNECT_S, READ_S)
     last: BaseException | None = None
     for url in SOURCE_URLS:
         req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
         try:
             print(f"trying {url}", flush=True)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=URL_TIMEOUT_S) as resp:
                 data = resp.read()
             if len(data) < MIN_BYTES:
                 raise ValueError(f"body too small ({len(data)} B)")

@@ -210,20 +210,35 @@ async def api_py_files(
     subdir: str = Query(
         "",
         alias="dir",
-        description="Repo-relative directory; lists *.py in that folder only (not recursive).",
+        description="Repo-relative directory; lists *.py there, or recursively if recursive=true.",
+    ),
+    recursive: bool = Query(
+        False,
+        description="If true, list every *.py under dir (nested subfolders).",
     ),
 ) -> dict:
-    """List ``.py`` files directly inside a subdirectory of the repo (for UI dropdown)."""
+    """List ``.py`` files under a subdirectory of the repo (for UI dropdown)."""
     d = subdir.strip()
     if not d:
-        return {"dir": "", "files": []}
+        return {"dir": "", "files": [], "recursive": recursive}
     folder = safe_dir_under_root(d)
     root = stonesoup_root()
     files: list[str] = []
-    for p in sorted(folder.glob("*.py")):
-        if p.is_file():
-            files.append(p.relative_to(root).as_posix())
-    return {"dir": d.replace("\\", "/"), "files": files}
+    if recursive:
+        for p in sorted(folder.rglob("*.py")):
+            if not p.is_file():
+                continue
+            try:
+                rp = p.resolve()
+                rel = rp.relative_to(root.resolve())
+            except ValueError:
+                continue
+            files.append(rel.as_posix())
+    else:
+        for p in sorted(folder.glob("*.py")):
+            if p.is_file():
+                files.append(p.relative_to(root).as_posix())
+    return {"dir": d.replace("\\", "/"), "files": files, "recursive": recursive}
 
 
 @app.post("/api/watch")
@@ -235,7 +250,15 @@ async def api_watch(body: WatchBody) -> dict:
     _reload_from_disk_sync()
     state.watcher.start(path, _on_file_changed)
     await _broadcast_cells()
-    return {"ok": True, "path": str(path), "revision": state.revision, "n_cells": len(state.cells)}
+    cp = _cells_payload()
+    return {
+        "ok": True,
+        "path": cp["path"],
+        "revision": cp["revision"],
+        "n_cells": len(state.cells),
+        "cells": cp["cells"],
+        "changed_cell_indices": cp["changed_cell_indices"],
+    }
 
 
 @app.get("/api/cells")
@@ -311,6 +334,12 @@ async def api_reset() -> dict:
     return {"ok": True}
 
 
+@app.get("/api/kernel/vars")
+async def api_kernel_vars() -> dict:
+    """Current user-visible names in the shared kernel namespace (repr previews, truncated)."""
+    return {"vars": state.kernel.snapshot_globals_for_ui()}
+
+
 @app.websocket("/ws")
 async def websocket_cells(ws: WebSocket) -> None:
     await ws.accept()
@@ -330,11 +359,19 @@ def main() -> None:
 
     host = os.environ.get("STONESOUP_HOST", "127.0.0.1")
     port = int(os.environ.get("STONESOUP_PORT", "8765"))
+    reload = os.environ.get("STONESOUP_RELOAD", "").strip().lower() in ("1", "true", "yes")
+    # Default uvicorn reload watches the process cwd (often repo root), which would restart on every
+    # experiment ``*.py`` save. Only watch the ``stonesoup`` package so reload is for server code only.
+    reload_dirs: list[str] | None = None
+    if reload:
+        stonesoup_package = Path(__file__).resolve().parent.parent
+        reload_dirs = [str(stonesoup_package)]
     uvicorn.run(
         "stonesoup.backend.server:app",
         host=host,
         port=port,
-        reload=False,
+        reload=reload,
+        reload_dirs=reload_dirs,
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -20,13 +21,32 @@ class _DebouncedHandler(FileSystemEventHandler):
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
 
+    def _is_target(self, path_str: str | bytes) -> bool:
+        try:
+            p = Path(os.fsdecode(path_str)).resolve()
+        except OSError:
+            return False
+        return p == self.target
+
     def on_modified(self, event) -> None:
         if getattr(event, "is_directory", False):
             return
-        p = Path(str(event.src_path)).resolve()
-        if p != self.target:
+        if self._is_target(getattr(event, "src_path", "")):
+            self._schedule()
+
+    def on_created(self, event) -> None:
+        """Atomic save (write temp + rename) often emits *created* for the final file."""
+        if getattr(event, "is_directory", False):
             return
-        self._schedule()
+        if self._is_target(getattr(event, "src_path", "")):
+            self._schedule()
+
+    def on_moved(self, event) -> None:
+        """Same as *created* when the editor renames a temp file over the watched path."""
+        if getattr(event, "is_directory", False):
+            return
+        if self._is_target(getattr(event, "dest_path", "")):
+            self._schedule()
 
     def _schedule(self) -> None:
         with self._lock:

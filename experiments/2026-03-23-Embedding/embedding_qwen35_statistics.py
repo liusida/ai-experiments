@@ -4,7 +4,7 @@
 Loads ``data/embedding-layers/Qwen__Qwen3.5-0.8B.pt`` (written by ``demo.py``). Requires the tokenizer from
 Hugging Face for string-side statistics. From repo root::
 
-    uv run python 2026-03-23-Embedding/embedding_qwen35_statistics.py
+    uv run python experiments/2026-03-23-Embedding/embedding_qwen35_statistics.py
 
 In Stonesoup: **Watch** this file and run cells in order (kernel keeps globals).
 """
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
+import urllib.request
+from urllib.error import URLError
 
 import matplotlib
 
@@ -23,12 +25,10 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PLOTS_DIR = Path(__file__).resolve().parent / "plots"
 LAYER_DIR = REPO_ROOT / "data" / "embedding-layers"
 TEXT_CACHE_DIR = REPO_ROOT / "data" / "text"
-MODEL_NAME = "Qwen/Qwen3.5-0.8B"
-CACHE_PATH = LAYER_DIR / f"{MODEL_NAME.replace('/', '__')}.pt"
 
 
 def _np_describe_1d(x: np.ndarray, name: str) -> None:
@@ -48,6 +48,10 @@ def _np_describe_1d(x: np.ndarray, name: str) -> None:
 
 
 # %% Load embedding checkpoint
+# MODEL_NAME = "Qwen/Qwen3.5-0.8B"
+MODEL_NAME = LOOP_ITEM
+CACHE_PATH = LAYER_DIR / f"{MODEL_NAME.replace('/', '__')}.pt"
+
 if not CACHE_PATH.is_file():
     raise FileNotFoundError(
         f"Missing cache {CACHE_PATH}. Run demo.py once with this model (or save the embedding layer) "
@@ -244,7 +248,7 @@ for tid in high_ids:
 # %% Alice in Wonderland: load cached text, tokenize, count unique token ids
 # Expects UTF-8 plain text at ``data/text/gutenberg_11-0_alice_in_wonderland.txt`` (repo root).
 # Prefetch: ``mkdir -p data/text && curl -fL -o data/text/gutenberg_11-0_alice_in_wonderland.txt "https://raw.githubusercontent.com/GITenberg/Alice-s-Adventures-in-Wonderland_11/master/11-0.txt"``
-# or ``uv run python 2026-03-23-Embedding/download_alice_cache.py``.
+# or ``uv run python experiments/2026-03-23-Embedding/download_alice_cache.py``.
 ALICE_RAW_CACHE_PATH = TEXT_CACHE_DIR / "gutenberg_11-0_alice_in_wonderland.txt"
 
 
@@ -273,7 +277,7 @@ if not ALICE_RAW_CACHE_PATH.is_file():
         "From repo root:\n"
         "  mkdir -p data/text && curl -fL -o data/text/gutenberg_11-0_alice_in_wonderland.txt "
         '"https://raw.githubusercontent.com/GITenberg/Alice-s-Adventures-in-Wonderland_11/master/11-0.txt"\n'
-        "Or: uv run python 2026-03-23-Embedding/download_alice_cache.py"
+        "Or: uv run python experiments/2026-03-23-Embedding/download_alice_cache.py"
     )
 
 alice_raw = ALICE_RAW_CACHE_PATH.read_text(encoding="utf-8", errors="replace")
@@ -362,3 +366,146 @@ out_alice_top_path = PLOTS_DIR / "qwen35_alice_top100_token_cosine_similarity.pn
 fig_a.savefig(out_alice_top_path, dpi=320, bbox_inches="tight", pad_inches=0.35)
 plt.close(fig_a)
 print(f"\nSaved cosine heatmap ({n_top}×{n_top}): {out_alice_top_path}")
+
+# %% Common English (top 1k list): single-token words, norms + cosine similarity
+# Needs: ``w32``, ``tokenizer``, ``vocab_size`` (run **Load embedding** + **Tokenizer** cells; no ``row_l2`` required).
+# Word list: ``first20hours/google-10000-english`` (first 1k lines), cached under ``data/text/``.
+# Prefetch: ``curl -fL -o data/text/google_10000_english.txt "https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english.txt"``
+COMMON_EN_WORDS_N = 1000
+COMMON_WORDS_URL = (
+    "https://raw.githubusercontent.com/first20hours/google-10000-english/master/"
+    "google-10000-english.txt"
+)
+COMMON_WORDS_CACHE_PATH = TEXT_CACHE_DIR / "google_10000_english.txt"
+COMMON_WORDS_UA = "StonesoupEmbeddingStats/1.0 (+https://github.com/liusida/ai-experiments)"
+
+TEXT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+if COMMON_WORDS_CACHE_PATH.is_file():
+    _cw_raw = COMMON_WORDS_CACHE_PATH.read_text(encoding="utf-8", errors="replace")
+    print(f"Common words: loaded list from cache\n  {COMMON_WORDS_CACHE_PATH}")
+else:
+    print(f"Common words: downloading\n  {COMMON_WORDS_URL}", flush=True)
+    req = urllib.request.Request(COMMON_WORDS_URL, headers={"User-Agent": COMMON_WORDS_UA})
+    try:
+        # Single float only: tuple (connect, read) breaks http.client → socket.settimeout on some Python builds.
+        with urllib.request.urlopen(req, timeout=120.0) as resp:
+            _cw_raw = resp.read().decode("utf-8", errors="replace")
+    except (URLError, TimeoutError, OSError) as e:
+        raise RuntimeError(
+            f"Download failed ({e}). Save the file manually to:\n  {COMMON_WORDS_CACHE_PATH}"
+        ) from e
+    COMMON_WORDS_CACHE_PATH.write_text(_cw_raw, encoding="utf-8")
+    print(f"  saved cache ({len(_cw_raw):,} chars)")
+
+_cw_lines = [ln.strip().lower() for ln in _cw_raw.splitlines() if ln.strip()]
+_common_head = _cw_lines[:COMMON_EN_WORDS_N]
+print(f"  Using first {len(_common_head)} words from list (target {COMMON_EN_WORDS_N}).")
+
+# Leading space matches subword-boundary tokenization (same idea as the king/queen cell).
+_single_common: list[tuple[str, int]] = []
+_seen_cw: set[int] = set()
+for w in _common_head:
+    piece = " " + w
+    _ids = tokenizer.encode(piece, add_special_tokens=False)
+    if len(_ids) != 1:
+        continue
+    _tid = int(_ids[0])
+    if not (0 <= _tid < vocab_size):
+        continue
+    if _tid in _seen_cw:
+        continue
+    _seen_cw.add(_tid)
+    _single_common.append((w, _tid))
+
+_cw_words = [t[0] for t in _single_common]
+_cw_tids = [t[1] for t in _single_common]
+_n_cw = len(_cw_tids)
+print(
+    f"Single-token & unique id within first {COMMON_EN_WORDS_N} list words: {_n_cw} "
+    f"({100.0 * _n_cw / max(1, len(_common_head)):.1f}% of {len(_common_head)} lines)"
+)
+if _n_cw < 10:
+    raise RuntimeError("Too few single-token common words; check tokenizer / list.")
+
+_cw_norms = torch.linalg.vector_norm(w32[_cw_tids], dim=1).float().cpu().numpy()
+
+_Ecw = w32[_cw_tids]
+_Ecw_u = _Ecw / (torch.linalg.vector_norm(_Ecw, dim=1, keepdim=True) + 1e-12)
+_sim_cw_full = (_Ecw_u @ _Ecw_u.T).cpu().numpy()
+_iu = np.triu_indices(_n_cw, k=1)
+_cw_cos_flat = _sim_cw_full[_iu]
+
+PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- Norm distribution
+_fig_n, _ax_n = plt.subplots(figsize=(7.5, 4.2), layout="constrained")
+_ax_n.hist(_cw_norms, bins=min(48, max(12, _n_cw // 8)), color="steelblue", edgecolor="black", alpha=0.88)
+_ax_n.axvline(float(np.mean(_cw_norms)), color="darkred", linestyle="--", linewidth=1.2, label=f"mean={np.mean(_cw_norms):.4f}")
+_ax_n.set_title(
+    f"Row L2 norm (embedding): single-token common words\n"
+    f"(first {COMMON_EN_WORDS_N} of Google 10k-style list, {_n_cw} kept)",
+    fontsize=11,
+)
+_ax_n.set_xlabel("‖e‖₂")
+_ax_n.set_ylabel("count")
+_ax_n.legend(loc="upper right", fontsize=9)
+_path_n = PLOTS_DIR / "qwen35_common_english_single_token_norm_hist.png"
+_fig_n.savefig(_path_n, dpi=160, bbox_inches="tight")
+plt.close(_fig_n)
+print(f"Saved norm histogram: {_path_n}")
+
+# --- Pairwise cosine similarity distribution (all off-diagonal pairs)
+_fig_c, _ax_c = plt.subplots(figsize=(7.5, 4.2), layout="constrained")
+_ax_c.hist(_cw_cos_flat, bins=72, range=(-1.0, 1.0), color="seagreen", edgecolor="black", alpha=0.85)
+_ax_c.axvline(float(np.mean(_cw_cos_flat)), color="darkred", linestyle="--", linewidth=1.2, label=f"mean={np.mean(_cw_cos_flat):.4f}")
+_ax_c.set_title(
+    f"Pairwise cosine similarity (unique single-token common words, n={_n_cw})\n"
+    f"upper triangle, {len(_cw_cos_flat):,} pairs",
+    fontsize=11,
+)
+_ax_c.set_xlabel("cos(eᵢ, eⱼ), i < j")
+_ax_c.set_ylabel("count")
+_ax_c.legend(loc="upper left", fontsize=9)
+_path_c = PLOTS_DIR / "qwen35_common_english_single_token_cosine_hist.png"
+_fig_c.savefig(_path_c, dpi=160, bbox_inches="tight")
+plt.close(_fig_c)
+print(f"Saved cosine histogram: {_path_c}")
+
+# --- Heatmap: first min(n, 100) words (full matrix for that subset)
+_CW_HEATMAP_MAX = 100
+_hn = min(_n_cw, _CW_HEATMAP_MAX)
+_sim_h = _sim_cw_full[:_hn, :_hn]
+_fig_h, _ax_h = plt.subplots(
+    figsize=(max(10.0, _hn * 0.14 + 2.5), max(8.5, _hn * 0.14 + 2.2)),
+    layout="constrained",
+)
+_im_h = _ax_h.imshow(_sim_h, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="equal")
+_fig_h.colorbar(_im_h, ax=_ax_h, shrink=0.72, label="cosine similarity", fraction=0.035)
+_ax_h.set_title(
+    f"Cosine similarity: first {_hn} single-token common words\n"
+    f"(of {_n_cw} total from top-{COMMON_EN_WORDS_N} list; L2-normalized rows)",
+    fontsize=11,
+)
+
+
+def _cw_tick_lbl(i: int) -> str:
+    w, tid = _cw_words[i], _cw_tids[i]
+    s = w.replace("\n", "⏎")
+    if len(s) > 18:
+        s = s[:17] + "…"
+    return f"{i}|{tid}|{s}"
+
+
+_tk = np.arange(_hn, dtype=int)
+_lh = [_cw_tick_lbl(int(i)) for i in _tk]
+_ax_h.set_xticks(_tk)
+_ax_h.set_yticks(_tk)
+_ax_h.set_xticklabels(_lh, rotation=90, ha="center", va="top", fontsize=4.0)
+_ax_h.set_yticklabels(_lh, fontsize=4.0)
+_ax_h.tick_params(axis="both", which="major", length=1.2, pad=0.8)
+_ax_h.set_xlabel("rank | id | word (within single-token subset)", fontsize=9)
+_ax_h.set_ylabel("rank | id | word (within single-token subset)", fontsize=9)
+_path_h = PLOTS_DIR / f"{MODEL_NAME.replace('/', '_')}_common_english_single_token_cosine_heatmap.png"
+_fig_h.savefig(_path_h, dpi=280, bbox_inches="tight", pad_inches=0.3)
+plt.close(_fig_h)
+print(f"Saved cosine heatmap ({_hn}×{_hn}): {_path_h}")

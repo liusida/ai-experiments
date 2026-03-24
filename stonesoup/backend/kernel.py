@@ -11,8 +11,49 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from typing import Any, Callable
 
+# Headless matplotlib before any cell can ``import matplotlib.pyplot`` (avoids TkAgg in worker
+# threads: tk ``__del__`` / "main thread is not in main loop" / Tcl_AsyncDelete).
+try:
+    import matplotlib
+
+    matplotlib.use("Agg")
+except ImportError:
+    pass
+
+
+_DEFAULT_TORCH_CUDA_MEMORY_FRACTION = 0.8
+
+
+def _stonesoup_apply_cuda_memory_fraction_cap() -> None:
+    """Cap PyTorch CUDA memory fraction before first CUDA alloc (unified RAM / OS headroom).
+
+    Default **0.8** if unset. Override with ``STONESOUP_CUDA_MEMORY_FRACTION`` or
+    ``AI_TORCH_CUDA_MEMORY_FRACTION`` (``0.05``…``1.0``; use ``1`` to relax the cap).
+    """
+    import os
+
+    raw = os.environ.get("STONESOUP_CUDA_MEMORY_FRACTION", "").strip()
+    if not raw:
+        raw = os.environ.get("AI_TORCH_CUDA_MEMORY_FRACTION", "").strip()
+    try:
+        frac = float(raw) if raw else _DEFAULT_TORCH_CUDA_MEMORY_FRACTION
+        if not (0.05 <= frac <= 1.0):
+            return
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.set_per_process_memory_fraction(frac, 0)
+    except Exception:
+        pass
+
+
+_stonesoup_apply_cuda_memory_fraction_cap()
+
 # VS Code / Spyder style: # %%, # %%, optional title after %%.
 CELL_START = re.compile(r"^\s*#\s*%%(.*)$")
+
+# Optional suffix on the same line, e.g. ``# %% Title # stonesoup:cell-input`` or ``# %% # stonesoup:cell-input``.
+CELL_INPUT_SUFFIX = re.compile(r"\s*#\s*stonesoup:\s*cell-input\s*$", re.IGNORECASE)
 
 
 def fingerprint_marker_line(marker_line: str | None) -> str:
@@ -33,6 +74,7 @@ class Cell:
     title: str
     source: str
     marker_key: str
+    cell_input: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -40,11 +82,16 @@ class Cell:
             "title": self.title,
             "source": self.source,
             "marker_key": self.marker_key,
+            "cell_input": self.cell_input,
         }
 
 
 def parse_cells(text: str) -> list[Cell]:
-    """Split a Python file into cells at lines matching ``# %%`` or ``#%%``."""
+    """Split a Python file into cells at lines matching ``# %%`` or ``#%%``.
+
+    A cell shows a run-input field in the UI when the marker line ends with
+    ``# stonesoup:cell-input`` (case-insensitive). The suffix is stripped from the title.
+    """
     lines = text.splitlines(keepends=True)
     cells: list[Cell] = []
     i = 0
@@ -56,16 +103,28 @@ def parse_cells(text: str) -> list[Cell]:
         m = CELL_START.match(lines[i])
         if m:
             marker_line = lines[i]
-            t = m.group(1).strip()
+            raw_rest = m.group(1).strip()
+            wants_input = bool(CELL_INPUT_SUFFIX.search(raw_rest))
+            t = CELL_INPUT_SUFFIX.sub("", raw_rest).strip() if wants_input else raw_rest.strip()
             title = t if t else title
             i += 1
+        else:
+            wants_input = False
         chunk: list[str] = []
         while i < n and not CELL_START.match(lines[i]):
             chunk.append(lines[i])
             i += 1
         source = "".join(chunk).rstrip("\n")
         mk = fingerprint_marker_line(marker_line)
-        cells.append(Cell(index=len(cells), title=title, source=source, marker_key=mk))
+        cells.append(
+            Cell(
+                index=len(cells),
+                title=title,
+                source=source,
+                marker_key=mk,
+                cell_input=wants_input,
+            )
+        )
 
     return cells
 
@@ -157,3 +216,34 @@ class Kernel:
             ok = False
             err_sink.write(traceback.format_exc())
         return out_sink.getvalue(), err_sink.getvalue(), ok
+
+    def snapshot_globals_for_ui(self, *, max_preview: int = 120) -> list[dict[str, str]]:
+        """JSON-safe name / type / repr preview for UI (excludes dunder and ``__builtins__``)."""
+        skip = frozenset(
+            {
+                "__builtins__",
+                "__name__",
+                "__doc__",
+                "__package__",
+                "__loader__",
+                "__spec__",
+                "__file__",
+                "__cached__",
+            }
+        )
+        # Injected each run for pipelines; not useful in the variables panel.
+        skip_pipeline = frozenset({"LOOP_INDEX", "LOOP_ITEM"})
+        rows: list[dict[str, str]] = []
+        for name in sorted(self.globals.keys(), key=lambda s: (s.lower(), s)):
+            if name in skip or name in skip_pipeline or name.startswith("__"):
+                continue
+            val = self.globals[name]
+            typ = type(val).__name__
+            try:
+                preview = repr(val)
+            except Exception as exc:  # noqa: BLE001 — user code in repr
+                preview = f"<repr error: {exc!r}>"
+            if len(preview) > max_preview:
+                preview = preview[: max_preview - 1] + "…"
+            rows.append({"name": name, "type": typ, "preview": preview})
+        return rows

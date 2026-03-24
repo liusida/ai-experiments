@@ -9,6 +9,7 @@ usage() {
   echo "  backend   — FastAPI + kernel (http://127.0.0.1:8765)" >&2
   echo "  frontend  — Vite UI (http://127.0.0.1:5173), proxies API to backend" >&2
   echo "  both      — backend in background, frontend in foreground (default)" >&2
+  echo "Env: STONESOUP_RELOAD=1 — uvicorn reload when stonesoup/ package changes only (not experiments/)." >&2
 }
 
 cmd="${1:-both}"

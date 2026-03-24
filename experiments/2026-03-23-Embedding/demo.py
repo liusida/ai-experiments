@@ -3,7 +3,7 @@
 
 From repo root (optional one-shot):
 
-    uv run python 2026-03-23-Embedding/demo.py
+    uv run python experiments/2026-03-23-Embedding/demo.py
 
 In Stonesoup: **Watch** this file, then run cells. Each ``# %%`` section is meant to be runnable on its own:
 define ``MODEL_NAME`` (and any knobs) inside that cell; shared multi-model list is ``MULTI_MODEL_INVESTIGATION_NAMES`` in helpers.
@@ -25,8 +25,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 _bundle_by_name: dict[str, dict] = {}
 
-# ``demo.py`` → ``2026-03-23-Embedding/`` → repo root ``ai-experiments/data/embedding-layers/``
-EMBEDDING_LAYER_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "embedding-layers"
+# ``demo.py`` → ``experiments/2026-03-23-Embedding/`` → repo root ``data/embedding-layers/``
+EMBEDDING_LAYER_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "embedding-layers"
 PREFER_EMBEDDING_DISK_CACHE = True
 WRITE_EMBEDDING_CACHE_AFTER_FULL_LOAD = True
 

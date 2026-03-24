@@ -4,7 +4,13 @@ import python from "highlight.js/lib/languages/python";
 
 hljs.registerLanguage("python", python);
 
-type Cell = { index: number; title: string; source: string; marker_key: string };
+type Cell = {
+  index: number;
+  title: string;
+  source: string;
+  marker_key: string;
+  cell_input?: boolean;
+};
 
 /** Manual resize / saved layout: must leave room below `.cell-head` for output/code */
 const CELL_LAYOUT_MIN_W = 220;
@@ -52,8 +58,6 @@ function saveWatchPathCookie(path: string) {
 
 /** Per-watched-file cell positions/sizes; one cookie JSON object keyed by repo-relative path */
 const CELL_LAYOUTS_COOKIE = "stonesoup_cell_layouts_v1";
-/** Stored alongside numeric cell keys in the same per-path record. */
-const LAYOUT_LOOP_COOKIE_KEY = "__stonesoup_loop__";
 type CellLayoutTuple = [number, number, number, number];
 type CellLayoutsFileMap = Record<string, CellLayoutTuple>;
 
@@ -97,9 +101,6 @@ function scheduleSaveCellLayouts() {
         Math.round(el.offsetHeight),
       ];
     }
-    if (loopPaletteManual) {
-      rec[LAYOUT_LOOP_COOKIE_KEY] = [...loopPaletteManual] as CellLayoutTuple;
-    }
     const all = parseCellLayoutsCookie();
     all[pathKey] = rec;
     writeCellLayoutsCookie(all);
@@ -109,45 +110,88 @@ function scheduleSaveCellLayouts() {
 const defaultPath =
   (urlParams.get("path") || "").trim() ||
   readWatchPathCookie().trim() ||
-  "2026-03-23-Embedding/demo.py";
+  "experiments/2026-03-23-Embedding/demo.py";
 
-/** Parent folder for the script picker (`?dir=` overrides). */
-function dirnameOfRelPath(p: string): string {
-  const s = p.replace(/\\/g, "/").replace(/\/+$/, "");
-  const i = s.lastIndexOf("/");
-  return i <= 0 ? "" : s.slice(0, i);
-}
-
-const scriptPickerDir = urlParams.get("dir") || dirnameOfRelPath(defaultPath);
+/** List *.py from this repo-relative folder; default `experiments` shows all dated experiment scripts. */
+const scriptPickerDir =
+  (urlParams.get("dir") ?? "").trim() || "experiments";
 
 app.innerHTML = `
   <div class="toolbar">
     <span class="ws-dot" id="ws-dot" title="WebSocket"></span>
-    <select id="path-select" title="Pick a .py file in the folder" aria-label="Script in folder">
-      <option value="">— folder scripts —</option>
-    </select>
-    <input type="text" id="path-input" placeholder="path under repo" spellcheck="false" />
+    <span class="script-picker">
+      <select id="folder-select" title="Experiment folder under list root" aria-label="Folder"></select>
+      <select id="file-select" title="Python file in folder" aria-label="File"></select>
+    </span>
+    <input type="hidden" id="path-input" />
     <button type="button" class="primary" id="btn-watch">Watch</button>
     <button type="button" id="btn-reset">Reset kernel</button>
-    <span class="status" id="status"></span>
   </div>
   <div class="pipeline-row" id="pipeline-row">
-    <span class="pipeline-label">Pipelines</span>
+    <div class="pipeline-aside">
+      <span class="pipeline-label">Pipelines</span>
+      <div class="loop-palette-slot" id="loop-palette-slot"></div>
+    </div>
     <div class="pipelines-stack" id="pipelines-stack"></div>
   </div>
   <div class="workspace">
     <div class="cells" id="cells"><div class="cells-canvas" id="cells-canvas"></div></div>
+    <div class="kernel-vars-dock" id="kernel-vars-dock">
+      <div class="kernel-vars-panel" id="kernel-vars-panel">
+        <div class="kernel-vars-toolbar">
+          <span class="kernel-vars-title">Kernel variables</span>
+          <button type="button" class="btn-icon" id="kernel-vars-refresh" title="Refresh list">⟳</button>
+          <button type="button" class="btn-icon" id="kernel-vars-collapse" title="Hide panel">▾</button>
+        </div>
+        <div class="kernel-vars-scroll">
+          <table class="kernel-vars-table" aria-label="Kernel variables">
+            <thead><tr><th>Name</th><th>Type</th><th>Value</th></tr></thead>
+            <tbody id="kernel-vars-tbody"></tbody>
+          </table>
+          <p class="kernel-vars-empty" id="kernel-vars-empty" hidden>No user variables (only builtins).</p>
+        </div>
+      </div>
+      <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show kernel variables">
+        <span class="kernel-vars-chip-icon" aria-hidden="true">{ }</span>
+        <span class="kernel-vars-chip-count" id="kernel-vars-count"></span>
+      </button>
+    </div>
   </div>
+  <div id="status-toast" class="status-toast" role="status" aria-live="polite"></div>
 `;
 
-const pathSelect = app.querySelector<HTMLSelectElement>("#path-select")!;
+const folderSelect = app.querySelector<HTMLSelectElement>("#folder-select")!;
+const fileSelect = app.querySelector<HTMLSelectElement>("#file-select")!;
 const pathInput = app.querySelector<HTMLInputElement>("#path-input")!;
 const btnWatch = app.querySelector<HTMLButtonElement>("#btn-watch")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
-const statusEl = app.querySelector<HTMLSpanElement>("#status")!;
+const statusToastEl = app.querySelector<HTMLDivElement>("#status-toast")!;
 const cellsEl = app.querySelector<HTMLDivElement>("#cells")!;
 const cellsCanvas = app.querySelector<HTMLDivElement>("#cells-canvas")!;
+const pipelineRow = document.getElementById("pipeline-row")!;
+const loopPaletteSlot = document.getElementById("loop-palette-slot")!;
 const wsDot = app.querySelector<HTMLSpanElement>("#ws-dot")!;
+const kernelVarsDock = app.querySelector<HTMLDivElement>("#kernel-vars-dock")!;
+const kernelVarsPanel = app.querySelector<HTMLDivElement>("#kernel-vars-panel")!;
+const kernelVarsTbody = app.querySelector<HTMLTableSectionElement>("#kernel-vars-tbody")!;
+const kernelVarsEmpty = app.querySelector<HTMLParagraphElement>("#kernel-vars-empty")!;
+const kernelVarsToggle = app.querySelector<HTMLButtonElement>("#kernel-vars-toggle")!;
+const kernelVarsCollapse = app.querySelector<HTMLButtonElement>("#kernel-vars-collapse")!;
+const kernelVarsRefresh = app.querySelector<HTMLButtonElement>("#kernel-vars-refresh")!;
+const kernelVarsCount = app.querySelector<HTMLSpanElement>("#kernel-vars-count")!;
+
+const KERNEL_VARS_EXPANDED_KEY = "stonesoup_kernel_vars_expanded";
+
+function resetLoopPaletteSlotPosition(el: HTMLElement) {
+  el.classList.remove("loop-palette--dragging");
+  el.style.position = "";
+  el.style.left = "";
+  el.style.top = "";
+  el.style.width = "";
+  el.style.height = "";
+  el.style.minHeight = "";
+  el.style.zIndex = "";
+}
 
 cellsEl.addEventListener("click", async (e) => {
   const out = (e.target as HTMLElement).closest<HTMLElement>(".out");
@@ -171,58 +215,170 @@ cellsEl.addEventListener("click", async (e) => {
 
 pathInput.value = defaultPath;
 
+type ScriptFileEntry = { rel: string; label: string };
+
+/** Sentinel: ``*.py`` directly under the list root (group key; not a real folder name). */
+const SCRIPT_PICKER_ROOT_FOLDER = "__ss_root__";
+
+/** First path segment under list root → files (full repo-relative path + label under that folder). */
+let scriptPickerGroups: Map<string, ScriptFileEntry[]> = new Map();
+
+function normalizeRelPath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+/**
+ * Group ``*.py`` paths by the first directory under ``root`` (posix). Files directly under ``root``
+ * use ``SCRIPT_PICKER_ROOT_FOLDER``.
+ */
+function groupPyFilesUnderRoot(root: string, files: string[]): Map<string, ScriptFileEntry[]> {
+  const r = normalizeRelPath(root);
+  const groups = new Map<string, ScriptFileEntry[]>();
+  for (const relRaw of files) {
+    const rel = relRaw.replace(/\\/g, "/");
+    if (!rel.toLowerCase().endsWith(".py")) continue;
+    if (rel === r) continue;
+    if (!rel.startsWith(r + "/")) continue;
+    const rest = rel.slice(r.length + 1);
+    const slash = rest.indexOf("/");
+    const folderKey = slash === -1 ? SCRIPT_PICKER_ROOT_FOLDER : rest.slice(0, slash);
+    const tail = slash === -1 ? rest : rest.slice(slash + 1);
+    if (!tail.toLowerCase().endsWith(".py")) continue;
+    const list = groups.get(folderKey) ?? [];
+    list.push({ rel, label: tail });
+    groups.set(folderKey, list);
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.label.localeCompare(b.label));
+  }
+  return groups;
+}
+
+function folderPickerLabel(folderKey: string): string {
+  if (folderKey !== SCRIPT_PICKER_ROOT_FOLDER) return folderKey;
+  const leaf = scriptPickerDir.split("/").filter(Boolean).pop();
+  return leaf ? `(${leaf})` : "(root)";
+}
+
+function populateFileOptions(folderKey: string) {
+  fileSelect.innerHTML = "";
+  const entries = scriptPickerGroups.get(folderKey) ?? [];
+  for (const e of entries) {
+    const opt = document.createElement("option");
+    opt.value = e.rel;
+    opt.textContent = e.label;
+    opt.title = e.rel;
+    fileSelect.appendChild(opt);
+  }
+}
+
+function pickFolderKeyForPath(pathWanted: string, groups: Map<string, ScriptFileEntry[]>): string | null {
+  const want = normalizeRelPath(pathWanted);
+  for (const [key, entries] of groups) {
+    if (entries.some((e) => e.rel === want)) return key;
+  }
+  return null;
+}
+
+async function fetchPyFilesUnderDir(dir: string): Promise<string[]> {
+  const params = new URLSearchParams({ dir, recursive: "true" });
+  const r = await fetch(`${apiBase}/api/py-files?${params}`);
+  const j = (await r.json()) as { files?: string[] };
+  if (!r.ok) throw new Error((j as { detail?: string }).detail || r.statusText);
+  return j.files ?? [];
+}
+
 async function populateScriptPicker() {
-  pathSelect.innerHTML = "";
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = scriptPickerDir
-    ? `— ${scriptPickerDir}/ —`
-    : "— set path with folder/ —";
-  pathSelect.appendChild(placeholder);
+  folderSelect.innerHTML = "";
+  fileSelect.innerHTML = "";
 
   if (!scriptPickerDir) {
-    pathSelect.disabled = true;
+    folderSelect.disabled = true;
+    fileSelect.disabled = true;
     return;
   }
 
-  pathSelect.disabled = false;
+  folderSelect.disabled = false;
+  fileSelect.disabled = false;
   try {
-    const r = await fetch(
-      `${apiBase}/api/py-files?${new URLSearchParams({ dir: scriptPickerDir })}`,
-    );
-    const j = (await r.json()) as { files?: string[] };
-    if (!r.ok) throw new Error((j as { detail?: string }).detail || r.statusText);
-    const files = j.files ?? [];
-    for (const rel of files) {
-      const opt = document.createElement("option");
-      opt.value = rel;
-      opt.textContent = rel.includes("/") ? rel.slice(rel.lastIndexOf("/") + 1) : rel;
-      opt.title = rel;
-      pathSelect.appendChild(opt);
+    let listDir = scriptPickerDir;
+    let files = await fetchPyFilesUnderDir(listDir);
+    scriptPickerGroups = groupPyFilesUnderRoot(listDir, files);
+
+    const want = pathInput.value.trim().replace(/\\/g, "/");
+    let chosenKey = pickFolderKeyForPath(want, scriptPickerGroups);
+    if (
+      chosenKey === null &&
+      want &&
+      want.startsWith("experiments/") &&
+      listDir !== "experiments"
+    ) {
+      files = await fetchPyFilesUnderDir("experiments");
+      listDir = "experiments";
+      scriptPickerGroups = groupPyFilesUnderRoot("experiments", files);
+      chosenKey = pickFolderKeyForPath(want, scriptPickerGroups);
     }
-    if (files.includes(pathInput.value.trim())) {
-      pathSelect.value = pathInput.value.trim();
+
+    const keys = [...scriptPickerGroups.keys()].sort((a, b) => {
+      if (a === SCRIPT_PICKER_ROOT_FOLDER) return 1;
+      if (b === SCRIPT_PICKER_ROOT_FOLDER) return -1;
+      return a.localeCompare(b);
+    });
+
+    for (const key of keys) {
+      const opt = document.createElement("option");
+      opt.value = key;
+      opt.textContent = folderPickerLabel(key);
+      folderSelect.appendChild(opt);
+    }
+
+    if (chosenKey === null && keys.length > 0) {
+      chosenKey = keys[0]!;
+    }
+    if (keys.length === 0) {
+      folderSelect.disabled = true;
+      fileSelect.disabled = true;
+    } else if (chosenKey !== null) {
+      folderSelect.value = chosenKey;
+      populateFileOptions(chosenKey);
+      const entries = scriptPickerGroups.get(chosenKey) ?? [];
+      const match = entries.find((e) => e.rel === want);
+      if (match) {
+        fileSelect.value = match.rel;
+      } else if (entries.length > 0) {
+        fileSelect.value = entries[0]!.rel;
+        pathInput.value = entries[0]!.rel;
+      }
     }
   } catch {
+    scriptPickerGroups = new Map();
     const err = document.createElement("option");
     err.value = "";
     err.textContent = "(could not list folder)";
     err.disabled = true;
-    pathSelect.appendChild(err);
+    folderSelect.appendChild(err);
+    folderSelect.disabled = true;
+    fileSelect.disabled = true;
   }
 }
 
-pathSelect.addEventListener("change", () => {
-  const v = pathSelect.value.trim();
-  if (!v) return;
-  pathInput.value = v;
+folderSelect.addEventListener("change", () => {
+  const key = folderSelect.value;
+  populateFileOptions(key);
+  const entries = scriptPickerGroups.get(key) ?? [];
+  if (entries.length === 0) {
+    return;
+  }
+  fileSelect.value = entries[0]!.rel;
+  pathInput.value = entries[0]!.rel;
   void postWatch();
 });
 
-pathInput.addEventListener("change", () => {
-  const v = pathInput.value.trim();
-  const opt = [...pathSelect.options].find((o) => o.value === v);
-  if (opt) pathSelect.value = v;
+fileSelect.addEventListener("change", () => {
+  const v = fileSelect.value.trim();
+  if (!v) return;
+  pathInput.value = v;
+  void postWatch();
 });
 
 void populateScriptPicker();
@@ -235,6 +391,27 @@ const outputs = new Map<number, { stdout: string; stderr: string; ok: boolean }>
 const expanded = new Set<number>();
 /** Cell indices whose source changed on disk since last successful run (merged from server + cleared on run). */
 const staleCells = new Set<number>();
+
+/** Per-cell run input text; merged into kernel as ``CELL_INPUT`` (survives UI re-render). */
+const cellRunInputDraft = new Map<number, string>();
+
+function cellRunInputValue(index: number): string {
+  const el = cellsEl.querySelector<HTMLInputElement>(`[data-run-input="${index}"]`);
+  if (el) return el.value;
+  return cellRunInputDraft.get(index) ?? "";
+}
+
+function cellWantsRunInput(index: number): boolean {
+  return lastCells.some((c) => c.index === index && c.cell_input === true);
+}
+
+function mergeCellRunInject(index: number, inject?: Record<string, unknown> | null): Record<string, unknown> {
+  const base: Record<string, unknown> = { ...(inject ?? {}) };
+  if (cellWantsRunInput(index)) {
+    base.CELL_INPUT = cellRunInputValue(index);
+  }
+  return base;
+}
 
 /** Drop output / expanded state for cell indices that no longer exist after a re-parse. */
 function pruneOutputsAndExpanded(cellCount: number) {
@@ -255,24 +432,13 @@ function pruneStaleCells(cellCount: number) {
 const cellPositions = new Map<number, { left: number; top: number }>();
 /** When non-empty, canvas uses saved left/top/width/height per file cell index (from cookie or after drag). */
 const manualLayoutByCellIdx = new Map<number, { left: number; top: number; width: number; height: number }>();
-/** Saved ↻ Loop palette rect (same cookie file as cells); null = place below grid. */
-let loopPaletteManual: CellLayoutTuple | null = null;
-
 function loadManualLayoutsForPath(pathKey: string) {
   manualLayoutByCellIdx.clear();
-  loopPaletteManual = null;
   if (!pathKey || pathKey === "_unset") return;
   const all = parseCellLayoutsCookie();
   const rec = all[pathKey];
   if (!rec) return;
   for (const [k, v] of Object.entries(rec)) {
-    if (k === LAYOUT_LOOP_COOKIE_KEY) {
-      if (!Array.isArray(v) || v.length !== 4) continue;
-      const [l, t, w, h] = v;
-      if (![l, t, w, h].every((x) => typeof x === "number" && Number.isFinite(x))) continue;
-      loopPaletteManual = [l, t, w, h];
-      continue;
-    }
     const idx = Number(k);
     if (!Number.isInteger(idx) || !Array.isArray(v) || v.length !== 4) continue;
     const [l, t, w, h] = v;
@@ -497,8 +663,23 @@ function savePipeline() {
   }
 }
 
+/** Toast duration; new messages reset the timer. */
+const STATUS_TOAST_MS = 4000;
+let statusHideTimer = 0;
+
 function setStatus(msg: string) {
-  statusEl.textContent = msg;
+  statusToastEl.textContent = msg;
+  statusToastEl.classList.add("status-toast--visible");
+  if (statusHideTimer) window.clearTimeout(statusHideTimer);
+  statusHideTimer = window.setTimeout(() => {
+    statusHideTimer = 0;
+    statusToastEl.classList.remove("status-toast--visible");
+    window.setTimeout(() => {
+      if (!statusToastEl.classList.contains("status-toast--visible")) {
+        statusToastEl.textContent = "";
+      }
+    }, 220);
+  }, STATUS_TOAST_MS);
 }
 
 /** Inline z-index rises so the last-touched / running cell stacks above siblings (default z-index is CSS). */
@@ -533,6 +714,112 @@ function appendCellStreamChunk(index: number, text: string) {
   if (outEl) outEl.textContent += text;
 }
 
+function applyCellsFromServer(
+  data: {
+    revision: number;
+    path: string | null;
+    cells: Cell[];
+    changed_cell_indices?: unknown;
+  },
+  opts?: { forceResetOutputs?: boolean },
+) {
+  const incomingPath = data.path ?? null;
+  const pathChanged = (incomingPath ?? "") !== (lastPath ?? "");
+  if (pathChanged || opts?.forceResetOutputs) {
+    outputs.clear();
+    expanded.clear();
+    staleCells.clear();
+  }
+  revision = data.revision;
+  const cells = data.cells;
+  if (!pathChanged && !opts?.forceResetOutputs) {
+    pruneOutputsAndExpanded(cells.length);
+    pruneStaleCells(cells.length);
+  }
+  const changed = data.changed_cell_indices;
+  if (Array.isArray(changed)) {
+    for (const x of changed) {
+      const i = Number(x);
+      if (Number.isInteger(i) && i >= 0 && i < cells.length) staleCells.add(i);
+    }
+  }
+  try {
+    renderCells(cells, incomingPath);
+  } catch (err) {
+    console.error("stonesoup: renderCells failed", err);
+    setStatus(`Cell UI error: ${String(err)}`);
+  }
+}
+
+let kernelVarsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function kernelVarsStartExpanded(): boolean {
+  const v = localStorage.getItem(KERNEL_VARS_EXPANDED_KEY);
+  if (v === null) return true;
+  return v === "1";
+}
+
+function scheduleKernelVarsRefresh() {
+  if (kernelVarsRefreshTimer != null) window.clearTimeout(kernelVarsRefreshTimer);
+  kernelVarsRefreshTimer = window.setTimeout(() => {
+    kernelVarsRefreshTimer = null;
+    void fetchKernelVars();
+  }, 120);
+}
+
+async function fetchKernelVars() {
+  try {
+    const r = await fetch(`${apiBase}/api/kernel/vars`);
+    const j = (await r.json()) as { vars?: { name: string; type: string; preview: string }[] };
+    if (!r.ok || !Array.isArray(j.vars)) return;
+    const n = j.vars.length;
+    kernelVarsCount.textContent = n ? String(n) : "";
+    kernelVarsTbody.replaceChildren();
+    for (const row of j.vars) {
+      const tr = document.createElement("tr");
+      const tdName = document.createElement("td");
+      tdName.className = "kernel-vars-name";
+      tdName.textContent = row.name;
+      const tdType = document.createElement("td");
+      tdType.className = "kernel-vars-type";
+      tdType.textContent = row.type;
+      const tdPrev = document.createElement("td");
+      tdPrev.className = "kernel-vars-preview";
+      tdPrev.textContent = row.preview;
+      tr.append(tdName, tdType, tdPrev);
+      kernelVarsTbody.appendChild(tr);
+    }
+    const table = kernelVarsTbody.closest("table");
+    if (table) table.hidden = n === 0;
+    kernelVarsEmpty.hidden = n > 0;
+  } catch {
+    /* ignore */
+  }
+}
+
+function initKernelVarsDock() {
+  const open = kernelVarsStartExpanded();
+  kernelVarsDock.classList.toggle("collapsed", !open);
+  kernelVarsToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  void fetchKernelVars();
+}
+
+kernelVarsToggle.addEventListener("click", () => {
+  if (!kernelVarsDock.classList.contains("collapsed")) return;
+  kernelVarsDock.classList.remove("collapsed");
+  kernelVarsToggle.setAttribute("aria-expanded", "true");
+  localStorage.setItem(KERNEL_VARS_EXPANDED_KEY, "1");
+  void fetchKernelVars();
+});
+
+kernelVarsCollapse.addEventListener("click", () => {
+  kernelVarsDock.classList.add("collapsed");
+  kernelVarsToggle.setAttribute("aria-expanded", "false");
+  localStorage.setItem(KERNEL_VARS_EXPANDED_KEY, "0");
+});
+
+kernelVarsRefresh.addEventListener("click", () => void fetchKernelVars());
+
 function connectWs() {
   ws?.close();
   ws = new WebSocket(wsUrl());
@@ -552,27 +839,14 @@ function connectWs() {
         text?: string;
       };
       if (data.type === "cells") {
-        const incomingPath = (data as { path?: string | null }).path ?? null;
-        const pathChanged = (incomingPath ?? "") !== (lastPath ?? "");
-        if (pathChanged) {
-          outputs.clear();
-          expanded.clear();
-          staleCells.clear();
-        }
-        revision = (data as { revision?: number }).revision ?? revision;
-        const cells = (data as { cells: Cell[] }).cells;
-        if (!pathChanged) {
-          pruneOutputsAndExpanded(cells.length);
-          pruneStaleCells(cells.length);
-        }
-        const changed = (data as { changed_cell_indices?: unknown }).changed_cell_indices;
-        if (Array.isArray(changed)) {
-          for (const x of changed) {
-            const i = Number(x);
-            if (Number.isInteger(i) && i >= 0 && i < cells.length) staleCells.add(i);
-          }
-        }
-        renderCells(cells, incomingPath);
+        const cells = (data as { cells?: Cell[] }).cells;
+        if (!Array.isArray(cells)) return;
+        applyCellsFromServer({
+          revision: (data as { revision?: number }).revision ?? revision,
+          path: (data as { path?: string | null }).path ?? null,
+          cells,
+          changed_cell_indices: (data as { changed_cell_indices?: unknown }).changed_cell_indices,
+        });
         setStatus(`rev ${revision} · ${cells.length} cells`);
       } else if (data.type === "run_start") {
         const ci = Number(data.cell_index);
@@ -583,6 +857,8 @@ function connectWs() {
         const ci = Number(data.cell_index);
         const t = typeof data.text === "string" ? data.text : "";
         if (Number.isInteger(ci) && t) appendCellStreamChunk(ci, t);
+      } else if (data.type === "run_end") {
+        scheduleKernelVarsRefresh();
       }
     } catch {
       /* ignore */
@@ -629,7 +905,7 @@ function relayoutCanvasBounds() {
   const padBottom = 420;
   let maxBottom = 0;
   let maxRight = 0;
-  cellsCanvas.querySelectorAll<HTMLElement>(".cell, .loop-palette").forEach((c) => {
+  cellsCanvas.querySelectorAll<HTMLElement>(".cell").forEach((c) => {
     maxBottom = Math.max(maxBottom, c.offsetTop + c.offsetHeight);
     maxRight = Math.max(maxRight, c.offsetLeft + c.offsetWidth);
   });
@@ -1092,9 +1368,12 @@ function renderPipelineBar() {
     shell.className = "pipeline-chips";
     shell.dataset.pipelineIndex = String(pIdx);
 
+    const flowScroll = document.createElement("div");
+    flowScroll.className = "pipeline-chips-flow-scroll";
     const flow = document.createElement("div");
     flow.className = "pipeline-chips-flow";
     renderLevel(flow, program, [], null, pIdx);
+    flowScroll.appendChild(flow);
 
     const actions = document.createElement("div");
     actions.className = "pipeline-block-actions";
@@ -1132,7 +1411,7 @@ function renderPipelineBar() {
     bClr.textContent = "✕";
     actions.append(bRun, bAbort, bAddAll, bClr);
 
-    shell.append(flow, actions);
+    shell.append(flowScroll, actions);
     block.appendChild(shell);
     stack.appendChild(block);
   }
@@ -1405,45 +1684,9 @@ function syncCellPositionsFromDom(nodes: HTMLElement[]) {
   });
 }
 
-function positionLoopPaletteBelowCells(nodes: HTMLElement[], pad: number, gap: number, cellW: number) {
-  const lp = cellsCanvas.querySelector<HTMLElement>(".loop-palette");
-  if (!lp) return;
-  let maxBottom = pad;
-  for (const cell of nodes) {
-    maxBottom = Math.max(maxBottom, cell.offsetTop + cell.offsetHeight);
-  }
-  lp.style.left = `${pad}px`;
-  lp.style.top = `${maxBottom + gap}px`;
-  lp.style.width = `${cellW}px`;
-}
-
-function applyLoopPalettePosition(nodes: HTMLElement[], pad: number, gap: number, cellW: number) {
-  const lp = cellsCanvas.querySelector<HTMLElement>(".loop-palette");
-  if (!lp) return;
-  if (loopPaletteManual) {
-    const [l, t, w, h] = loopPaletteManual;
-    lp.classList.add("loop-palette-custom-geometry");
-    lp.style.left = `${Math.max(0, l)}px`;
-    lp.style.top = `${Math.max(0, t)}px`;
-    lp.style.width = `${Math.max(CELL_LAYOUT_MIN_W, w)}px`;
-    if (h >= 40) {
-      lp.style.height = `${h}px`;
-      lp.style.minHeight = "0";
-    } else {
-      lp.style.height = "";
-      lp.style.minHeight = "";
-    }
-  } else {
-    lp.classList.remove("loop-palette-custom-geometry");
-    lp.style.height = "";
-    lp.style.minHeight = "";
-    positionLoopPaletteBelowCells(nodes, pad, gap, cellW);
-  }
-}
-
 function applyFloatingLayout() {
   const { pad, gap, cellW, cols } = computeCellGridParams();
-  const nodes = [...cellsCanvas.querySelectorAll<HTMLElement>(".cell")];
+  const nodes = [...cellsCanvas.querySelectorAll<HTMLElement>(".cell[data-pipeline-cell-drag]")];
   if (manualLayoutByCellIdx.size === 0) {
     const needHorizontalReflow = lastLayoutCols !== cols || cellPositions.size === 0;
     if (needHorizontalReflow) {
@@ -1461,7 +1704,6 @@ function applyFloatingLayout() {
     requestAnimationFrame(() => {
       packGridRows(nodes, cols, cellW, pad, gap);
       syncCellPositionsFromDom(nodes);
-      applyLoopPalettePosition(nodes, pad, gap, cellW);
       scheduleLayoutAndLines();
     });
     return;
@@ -1516,7 +1758,6 @@ function applyFloatingLayout() {
       stackY += cell.offsetHeight + gap;
     }
     syncCellPositionsFromDom(nodes);
-    applyLoopPalettePosition(nodes, pad, gap, cellW);
     scheduleLayoutAndLines();
   });
 }
@@ -1549,6 +1790,14 @@ function renderCells(cells: Cell[], path: string | null) {
     lastLayoutCount = cells.length;
   }
 
+  const validCellIdx = new Set(cells.map((c) => c.index));
+  for (const k of [...cellRunInputDraft.keys()]) {
+    if (!validCellIdx.has(k)) cellRunInputDraft.delete(k);
+  }
+  for (const c of cells) {
+    if (!c.cell_input) cellRunInputDraft.delete(c.index);
+  }
+
   cellsCanvas.innerHTML = "";
 
   for (const c of cells) {
@@ -1566,18 +1815,26 @@ function renderCells(cells: Cell[], path: string | null) {
     const showOut = hasCellBodyOutput(prev);
     const exp = expanded.has(c.index);
     if (!exp && !showOut) div.classList.add("cell-compact");
+    const runInputHtml = c.cell_input
+      ? `<input type="text" class="cell-run-input" draggable="false" data-run-input="${c.index}" placeholder="CELL_INPUT" spellcheck="false" title="Injected as CELL_INPUT · Ctrl+Enter or ⌘+Enter to run this cell" aria-label="Cell run input" />`
+      : "";
     div.innerHTML = `
       <div class="cell-body">
         <div class="cell-head">
-          <span class="cell-idx" title="Cell index in file (0-based)">${c.index}</span>
-          <span class="cell-updated-badge" draggable="false" ${stale ? "" : "hidden"} title="This cell's code changed on disk; run it to clear">Updated</span>
-          <span class="cell-title">${escapeHtml(c.title)}</span>
-          <button type="button" class="toggle" draggable="false" data-toggle="${c.index}" title="${exp ? "Hide source" : "Show source"}">${exp ? "Hide" : "Code"}</button>
-          <button type="button" class="btn-chain" draggable="false" data-pipeline-add="${c.index}" title="Append to pipeline">+ chain</button>
-          <button type="button" class="primary" draggable="false" data-run="${c.index}">Run</button>
+          <div class="cell-head-main">
+            <span class="cell-idx" title="Cell index in file (0-based)">${c.index}</span>
+            <span class="cell-updated-badge" draggable="false" ${stale ? "" : "hidden"} title="This cell's code changed on disk; run it to clear">Updated</span>
+            <span class="cell-title">${escapeHtml(c.title)}</span>
+          </div>
+          <div class="cell-head-actions">
+            <button type="button" class="toggle" draggable="false" data-toggle="${c.index}" title="${exp ? "Hide source" : "Show source"}">${exp ? "Hide" : "Code"}</button>
+            <button type="button" class="btn-chain" draggable="false" data-pipeline-add="${c.index}" title="Append to pipeline">+ chain</button>
+            ${runInputHtml}
+            <button type="button" class="primary" draggable="false" data-run="${c.index}">Run</button>
+          </div>
         </div>
         <div class="cell-code-panel" style="display:${exp ? "block" : "none"}">
-          <pre class="source full"><code class="language-python hljs">${highlightPython(c.source)}</code></pre>
+          <pre class="source full"><code class="language-python hljs">${safeHighlightPython(c.source)}</code></pre>
         </div>
         <div class="cell-output-block" data-output-block="${c.index}" style="display:${showOut ? "flex" : "none"}">
           <div class="out-label" draggable="false">Output</div>
@@ -1587,6 +1844,19 @@ function renderCells(cells: Cell[], path: string | null) {
       <div class="cell-resize-handle" draggable="false" title="Drag corner to resize"></div>
     `;
     cellsCanvas.appendChild(div);
+    const runInp = div.querySelector<HTMLInputElement>(`[data-run-input="${c.index}"]`);
+    if (runInp) {
+      runInp.value = cellRunInputDraft.get(c.index) ?? "";
+      const stopHeadDrag = (e: Event) => e.stopPropagation();
+      runInp.addEventListener("pointerdown", stopHeadDrag);
+      runInp.addEventListener("mousedown", stopHeadDrag);
+      runInp.addEventListener("input", () => cellRunInputDraft.set(c.index, runInp.value));
+      runInp.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key !== "Enter" || (!e.ctrlKey && !e.metaKey)) return;
+        e.preventDefault();
+        void runCell(c.index);
+      });
+    }
   }
 
   cellsCanvas.querySelectorAll("[data-run]").forEach((btn) => {
@@ -1612,16 +1882,15 @@ function renderCells(cells: Cell[], path: string | null) {
   });
 
   const loopPal = document.createElement("div");
-  loopPal.className = "loop-palette";
-  loopPal.title = "Drag header to move; drop on pipeline bar to insert a loop";
+  loopPal.className = "loop-palette loop-palette--slot";
+  loopPal.title = "Drag into a pipeline row to insert a loop (short drag from the left)";
   loopPal.innerHTML = `
     <div class="loop-palette-head">
       <span class="loop-palette-grip" aria-hidden="true">⠿</span>
       <span class="loop-palette-label">↻ Loop</span>
-      <span class="loop-palette-hint">Pipeline</span>
     </div>
   `;
-  cellsCanvas.appendChild(loopPal);
+  loopPaletteSlot.replaceChildren(loopPal);
 
   applyFloatingLayout();
   renderPipelineBar();
@@ -1692,10 +1961,19 @@ function highlightPython(source: string): string {
   }
 }
 
+function safeHighlightPython(source: string): string {
+  try {
+    return highlightPython(source);
+  } catch (err) {
+    console.error("stonesoup: highlightPython failed", err);
+    return escapeHtml(source);
+  }
+}
+
 async function postWatch() {
   const path = pathInput.value.trim();
   if (!path) {
-    setStatus("Enter a path");
+    setStatus("Pick a folder and file");
     return;
   }
   btnWatch.disabled = true;
@@ -1705,14 +1983,34 @@ async function postWatch() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
     });
-    const j = await r.json();
+    const j = (await r.json()) as {
+      detail?: string;
+      revision?: number;
+      n_cells?: number;
+      path?: string | null;
+      cells?: Cell[];
+      changed_cell_indices?: unknown;
+    };
     if (!r.ok) throw new Error(j.detail || r.statusText);
-    outputs.clear();
-    expanded.clear();
-    staleCells.clear();
     saveWatchPathCookie(path);
+    if (Array.isArray(j.cells)) {
+      applyCellsFromServer(
+        {
+          revision: Number(j.revision) || 0,
+          path: typeof j.path === "string" || j.path === null ? j.path : null,
+          cells: j.cells,
+          changed_cell_indices: j.changed_cell_indices,
+        },
+        { forceResetOutputs: true },
+      );
+    } else {
+      outputs.clear();
+      expanded.clear();
+      staleCells.clear();
+      revision = j.revision ?? revision;
+    }
     setStatus(`watching · rev ${j.revision} · ${j.n_cells} cells`);
-    revision = j.revision;
+    scheduleKernelVarsRefresh();
   } catch (e) {
     setStatus(String(e));
   } finally {
@@ -1726,8 +2024,10 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
   setCellRunningState(index, true);
   if (btn) btn.disabled = true;
   try {
-    const body: Record<string, unknown> = { cell_index: index };
-    if (inject != null) body.inject = inject;
+    const body: Record<string, unknown> = {
+      cell_index: index,
+      inject: mergeCellRunInject(index, inject),
+    };
     const r = await fetch(`${apiBase}/api/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1791,6 +2091,7 @@ async function resetKernel() {
     });
     applyFloatingLayout();
     setStatus(`rev ${revision} · kernel reset`);
+    scheduleKernelVarsRefresh();
   } catch (e) {
     setStatus(String(e));
   } finally {
@@ -2028,8 +2329,10 @@ type CanvasHeadDragState =
       pointerId: number;
       startX: number;
       startY: number;
+      /** Viewport coordinates; element uses `position: fixed` while dragging. */
       origL: number;
       origT: number;
+      viewportDrag: true;
     };
 type CellResizeGeomState = {
   el: HTMLElement;
@@ -2066,11 +2369,10 @@ function onCellGeomWindowMove(e: PointerEvent) {
   }
   if (canvasHeadDragGeom && e.pointerId === canvasHeadDragGeom.pointerId) {
     e.preventDefault();
-    const { el, startX, startY, origL, origT } = canvasHeadDragGeom;
+    const { el, startX, startY, origL, origT, kind } = canvasHeadDragGeom;
     clearPipelineDropHighlights();
-    const pr = document.getElementById("pipeline-row");
-    const z = pr ? hitTestPipelineDropZone(e.clientX, e.clientY) : null;
-    const overPipeline = Boolean(z && pr?.contains(z));
+    const z = hitTestPipelineDropZone(e.clientX, e.clientY);
+    const overPipeline = Boolean(z && pipelineRow.contains(z));
     if (overPipeline && z) {
       /* Snap preview to home: release here only adds to pipeline, not a canvas move */
       el.style.left = `${origL}px`;
@@ -2080,7 +2382,7 @@ function onCellGeomWindowMove(e: PointerEvent) {
       el.style.left = `${origL + e.clientX - startX}px`;
       el.style.top = `${origT + e.clientY - startY}px`;
     }
-    relayoutCanvasBounds();
+    if (kind === "cell") relayoutCanvasBounds();
   }
 }
 
@@ -2104,10 +2406,9 @@ function onCellGeomWindowEnd(e: PointerEvent) {
       /* already released */
     }
     clearPipelineDropHighlights();
-    const pipelineRow = document.getElementById("pipeline-row");
-    const z = pipelineRow ? hitTestPipelineDropZone(e.clientX, e.clientY) : null;
+    const z = hitTestPipelineDropZone(e.clientX, e.clientY);
     let inserted = false;
-    if (z && pipelineRow?.contains(z)) {
+    if (z && pipelineRow.contains(z)) {
       const loopRaw = z.dataset.dropLoop ?? "";
       let bodyLoopPath: number[] | null = null;
       if (loopRaw !== "") {
@@ -2121,29 +2422,27 @@ function onCellGeomWindowEnd(e: PointerEvent) {
       const toPIdx = Number(z.dataset.dropPipeline);
       if (Number.isInteger(at) && at >= 0 && Number.isInteger(toPIdx) && toPIdx >= 0) {
         const { el, origL, origT, kind } = canvasHeadDragGeom;
-        el.style.left = `${origL}px`;
-        el.style.top = `${origT}px`;
         if (kind === "cell") {
+          el.style.left = `${origL}px`;
+          el.style.top = `${origT}px`;
           insertCellInPipeline(canvasHeadDragGeom.cellIndex, bodyLoopPath, at, toPIdx);
-        } else {
+          inserted = true;
+        } else if (kind === "loop") {
+          resetLoopPaletteSlotPosition(el);
           insertNewLoopInPipeline(bodyLoopPath, at, toPIdx);
+          inserted = true;
         }
-        inserted = true;
-        clearLoopExpanded();
-        savePipeline();
-        renderPipelineBar();
-        highlightPipelineCells();
-        setStatus("Pipeline updated");
+        if (inserted) {
+          clearLoopExpanded();
+          savePipeline();
+          renderPipelineBar();
+          highlightPipelineCells();
+          setStatus("Pipeline updated");
+        }
       }
     }
     if (canvasHeadDragGeom.kind === "loop" && !inserted) {
-      const lp = canvasHeadDragGeom.el;
-      loopPaletteManual = [
-        Math.round(parseFloat(lp.style.left) || lp.offsetLeft),
-        Math.round(parseFloat(lp.style.top) || lp.offsetTop),
-        Math.round(lp.offsetWidth),
-        Math.round(Math.max(40, lp.offsetHeight)),
-      ];
+      resetLoopPaletteSlotPosition(canvasHeadDragGeom.el);
     }
     snapshotCurrentLayoutToManualMap();
     scheduleSaveCellLayouts();
@@ -2156,6 +2455,44 @@ let cellGeometryBound = false;
 function bindCellGeometryInteractions() {
   if (cellGeometryBound) return;
   cellGeometryBound = true;
+
+  pipelineRow.addEventListener(
+    "pointerdown",
+    (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const t = e.target as HTMLElement;
+      if (!pipelineRow.contains(t)) return;
+      const loopHead = t.closest(".loop-palette-head");
+      if (!loopHead || !pipelineRow.contains(loopHead)) return;
+      if (t.closest("button, a, input, textarea, select")) return;
+      const loopPal = loopHead.closest<HTMLElement>(".loop-palette");
+      if (!loopPal || !loopPaletteSlot.contains(loopPal)) return;
+      bringCellToFront(loopPal);
+      e.preventDefault();
+      e.stopPropagation();
+      if (manualLayoutByCellIdx.size === 0) snapshotCurrentLayoutToManualMap();
+      const br = loopPal.getBoundingClientRect();
+      loopPal.classList.add("loop-palette--dragging");
+      loopPal.style.position = "fixed";
+      loopPal.style.left = `${br.left}px`;
+      loopPal.style.top = `${br.top}px`;
+      loopPal.style.width = `${br.width}px`;
+      loopPal.style.zIndex = String(++cellZStackCounter);
+      canvasHeadDragGeom = {
+        kind: "loop",
+        el: loopPal,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        origL: br.left,
+        origT: br.top,
+        viewportDrag: true,
+      };
+      loopPal.setPointerCapture(e.pointerId);
+      attachCellGeomWindowListeners();
+    },
+    true,
+  );
 
   cellsCanvas.addEventListener(
     "pointerdown",
@@ -2182,29 +2519,6 @@ function bindCellGeometryInteractions() {
           vTop: br.top,
         };
         cell.setPointerCapture(e.pointerId);
-        attachCellGeomWindowListeners();
-        return;
-      }
-
-      const loopHead = t.closest(".loop-palette-head");
-      if (loopHead && cellsCanvas.contains(loopHead)) {
-        if (t.closest("button, a, input, textarea, select")) return;
-        const loopPal = loopHead.closest<HTMLElement>(".loop-palette");
-        if (!loopPal || !cellsCanvas.contains(loopPal)) return;
-        bringCellToFront(loopPal);
-        e.preventDefault();
-        e.stopPropagation();
-        if (manualLayoutByCellIdx.size === 0) snapshotCurrentLayoutToManualMap();
-        canvasHeadDragGeom = {
-          kind: "loop",
-          el: loopPal,
-          pointerId: e.pointerId,
-          startX: e.clientX,
-          startY: e.clientY,
-          origL: parseFloat(loopPal.style.left) || loopPal.offsetLeft,
-          origT: parseFloat(loopPal.style.top) || loopPal.offsetTop,
-        };
-        loopPal.setPointerCapture(e.pointerId);
         attachCellGeomWindowListeners();
         return;
       }
@@ -2243,8 +2557,6 @@ function bindCellGeometryInteractions() {
       const tgt = e.target as HTMLElement;
       const cell = tgt.closest<HTMLElement>(".cell[data-pipeline-cell-drag]");
       if (cell && cellsCanvas.contains(cell)) bringCellToFront(cell);
-      const loopPal = tgt.closest<HTMLElement>(".loop-palette");
-      if (loopPal && cellsCanvas.contains(loopPal)) bringCellToFront(loopPal);
     },
     false,
   );
@@ -2357,5 +2669,6 @@ function bindPipelineDnD() {
 bindCellGeometryInteractions();
 bindPipelineDnD();
 renderPipelineBar();
+initKernelVarsDock();
 connectWs();
 postWatch();

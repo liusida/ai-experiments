@@ -21,6 +21,10 @@ uv run python -m stonesoup.backend.server
 
 Listens on **`127.0.0.1:8765`** by default (`STONESOUP_HOST` / `STONESOUP_PORT` override). Only paths **under the repo root** are allowed unless you set **`STONESOUP_ROOT`** to a different absolute root.
 
+**Auto-reload while editing the Stonesoup server:** set **`STONESOUP_RELOAD=1`** (or `true` / `yes`) before starting the server. Uvicorn restarts only when files under the **`stonesoup/`** package change (not `experiments/` or other repo paths). Editing a **watched experiment** ``.py`` already updates the UI via the file watcher + WebSocket—**no** server restart. Each uvicorn reload resets the in-memory kernel.
+
+**Repo shortcut:** from the repo root, **`./start-stonesoup`** runs **backend + frontend** together (backend in the background). You do **not** need a second terminal for the API unless you split them (`./start-stonesoup backend` in one terminal, `./start-stonesoup frontend` in another).
+
 ## 2. Frontend — browser (dev)
 
 Terminal B:
@@ -31,7 +35,7 @@ npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173/** in Firefox or another browser. Vite proxies `/api` and `/ws` to the backend. Use the **dropdown** to pick another `*.py` in the same folder as the default script (from the path’s parent directory), or type a repo-relative path in the text field, then click **Watch**. Override the folder used for the dropdown with **`?dir=2026-03-23-Embedding`** (repo-relative). Edit the file on disk; cells refresh over **WebSocket** after a short debounce.
+Open **http://127.0.0.1:5173/** in Firefox or another browser. Vite proxies `/api` and `/ws` to the backend. Use the **folder** and **file** dropdowns to pick any `*.py` under **`experiments/`** (grouped by dated subfolder); choosing a file starts **Watch** (or click **Watch** again). Override the list root with **`?dir=experiments/2026-03-23-Embedding`** or another repo-relative folder (still recursive). Edit the file on disk; cells refresh over **WebSocket** after a short debounce.
 
 Each cell is a **floating panel** inside the page. Drag **empty space** in the cell canvas (not on a cell or the **↻ Loop** strip) to **pan** (scroll). Layout reflows when the watched path or the number of cells changes.
 
@@ -45,12 +49,12 @@ Optional: **`npm run build`** writes a static site to **`frontend/dist/`** (hand
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/py-files?dir=rel/subfolder` | List `*.py` files **directly** in that repo-relative directory (non-recursive); UI script picker |
-| POST | `/api/watch` | `{"path": "relative/or/abs/under/root.py"}` — start watcher, parse cells |
+| GET | `/api/py-files?dir=rel/subfolder&recursive=true` | List `*.py` under that repo-relative directory; **`recursive=true`** walks subfolders (UI default for `dir=experiments`) |
+| POST | `/api/watch` | `{"path": "relative/or/abs/under/root.py"}` — start watcher, parse cells; response includes **`cells`**, **`revision`**, **`path`**, **`changed_cell_indices`** (same shape as WS) so the UI can refresh without waiting on the socket |
 | GET | `/api/cells` | Current cells + revision |
-| POST | `/api/run` | `{"cell_index": n, "inject": {...}?}` — optional `inject` merges into kernel globals before the cell |
+| POST | `/api/run` | `{"cell_index": n, "inject": {...}?}` — optional `inject` merges into kernel globals before the cell. Cells whose marker ends with **`# stonesoup:cell-input`** get a header field; the UI sends that string as **`CELL_INPUT`**. |
 | POST | `/api/reset` | Clear kernel globals |
-| WS | `/ws` | Push `{type:"cells", revision, cells}` on file change |
+| WS | `/ws` | Push `{type:"cells", revision, cells, ...}` on file change (debounced ~0.25s). The watcher treats **modified**, **created**, and **moved** events so atomic saves (temp + rename) still trigger a reload.
 
 ## Notes
 
