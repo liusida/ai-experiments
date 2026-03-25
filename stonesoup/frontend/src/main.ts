@@ -16,6 +16,9 @@ type Cell = {
 const CELL_LAYOUT_MIN_W = 220;
 const CELL_LAYOUT_MIN_H = 200;
 
+/** Symmetric empty margin around the zoom strip so panning can continue past content on all sides. */
+const CELLS_PAN_GUTTER_PX = 2400;
+
 const apiBase = import.meta.env.DEV ? "" : "http://127.0.0.1:8765";
 
 function wsUrl(): string {
@@ -135,7 +138,7 @@ app.innerHTML = `
     <div class="pipelines-stack" id="pipelines-stack"></div>
   </div>
   <div class="workspace">
-    <div class="cells" id="cells"><div class="cells-canvas" id="cells-canvas"></div></div>
+    <div class="cells" id="cells"><div class="cells-pan-arena" id="cells-pan-arena"><div class="cells-zoom-wrap" id="cells-zoom-wrap"><div class="cells-canvas" id="cells-canvas"></div></div></div></div>
     <div class="kernel-vars-dock" id="kernel-vars-dock">
       <div class="kernel-vars-panel" id="kernel-vars-panel">
         <div class="kernel-vars-toolbar">
@@ -167,7 +170,11 @@ const btnWatch = app.querySelector<HTMLButtonElement>("#btn-watch")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
 const statusToastEl = app.querySelector<HTMLDivElement>("#status-toast")!;
 const cellsEl = app.querySelector<HTMLDivElement>("#cells")!;
+const cellsPanArena = app.querySelector<HTMLDivElement>("#cells-pan-arena")!;
+const cellsZoomWrap = app.querySelector<HTMLDivElement>("#cells-zoom-wrap")!;
 const cellsCanvas = app.querySelector<HTMLDivElement>("#cells-canvas")!;
+cellsPanArena.style.boxSizing = "content-box";
+cellsPanArena.style.padding = `${CELLS_PAN_GUTTER_PX}px`;
 const pipelineRow = document.getElementById("pipeline-row")!;
 const loopPaletteSlot = document.getElementById("loop-palette-slot")!;
 const wsDot = app.querySelector<HTMLSpanElement>("#ws-dot")!;
@@ -899,6 +906,26 @@ function applyCellColorVars(el: HTMLElement, index: number) {
   el.style.setProperty("--cell-accent", tab20Accent(index));
 }
 
+/** View zoom for the cell canvas (logical layout unchanged; wrapper size × scale for scroll extents). */
+let cellsViewScale = 1;
+const CELLS_ZOOM_MIN = 0.35;
+const CELLS_ZOOM_MAX = 2.5;
+
+function applyCellsZoomLayout() {
+  const s = cellsViewScale;
+  const w = Math.max(1, cellsCanvas.offsetWidth);
+  const h = Math.max(1, cellsCanvas.offsetHeight);
+  cellsZoomWrap.style.width = `${Math.ceil(w * s)}px`;
+  cellsZoomWrap.style.height = `${Math.ceil(h * s)}px`;
+  if (s === 1) {
+    cellsCanvas.style.transform = "";
+    cellsCanvas.style.transformOrigin = "";
+  } else {
+    cellsCanvas.style.transform = `scale(${s})`;
+    cellsCanvas.style.transformOrigin = "0 0";
+  }
+}
+
 function relayoutCanvasBounds() {
   const padX = 48;
   /** Extra space below the lowest cell so the canvas can scroll vertically. */
@@ -916,6 +943,7 @@ function relayoutCanvasBounds() {
   const minW = Math.max(maxRight + padX, cellsEl.clientWidth);
   cellsCanvas.style.minHeight = `${minH}px`;
   cellsCanvas.style.minWidth = `${minW}px`;
+  applyCellsZoomLayout();
 }
 
 function flattenCellIndices(steps: PipelineStep[]): number[] {
@@ -1766,6 +1794,7 @@ function renderCells(cells: Cell[], path: string | null) {
   lastCells = cells;
   lastPath = path;
   const p = path ?? pathInput.value.trim();
+  const pathChangedForScrollReset = p !== lastLayoutPath;
   if (p !== lastLayoutPath || cells.length !== lastLayoutCount) {
     cellPositions.clear();
     lastLayoutCols = -1;
@@ -1895,6 +1924,18 @@ function renderCells(cells: Cell[], path: string | null) {
   applyFloatingLayout();
   renderPipelineBar();
   highlightPipelineCells();
+
+  if (pathChangedForScrollReset) {
+    const g = CELLS_PAN_GUTTER_PX;
+    requestAnimationFrame(() => {
+      cellsEl.scrollLeft = g;
+      cellsEl.scrollTop = g;
+      requestAnimationFrame(() => {
+        cellsEl.scrollLeft = g;
+        cellsEl.scrollTop = g;
+      });
+    });
+  }
 }
 
 function formatOut(o: { stdout: string; stderr: string; ok: boolean }) {
@@ -2345,6 +2386,9 @@ type CellResizeGeomState = {
 let canvasHeadDragGeom: CanvasHeadDragState | null = null;
 let cellResizeGeom: CellResizeGeomState | null = null;
 
+/** Background drag on `.cells` (not on a `.cell`) pans the scroll viewport. */
+let cellsPanState: { pointerId: number; lastX: number; lastY: number } | null = null;
+
 function attachCellGeomWindowListeners() {
   window.addEventListener("pointermove", onCellGeomWindowMove);
   window.addEventListener("pointerup", onCellGeomWindowEnd);
@@ -2357,12 +2401,21 @@ function detachCellGeomWindowListeners() {
   window.removeEventListener("pointercancel", onCellGeomWindowEnd);
 }
 
+/** Map viewport (post-transform) pixel deltas to `.cells-canvas` layout pixels when zoom ≠ 1. */
+function layoutDeltaFromViewport(d: number): number {
+  const s = cellsViewScale;
+  return s > 0 ? d / s : d;
+}
+
 function onCellGeomWindowMove(e: PointerEvent) {
   if (cellResizeGeom && e.pointerId === cellResizeGeom.pointerId) {
     e.preventDefault();
     const { el, vLeft, vTop } = cellResizeGeom;
-    el.style.width = `${Math.max(CELL_LAYOUT_MIN_W, e.clientX - vLeft)}px`;
-    el.style.height = `${Math.max(CELL_LAYOUT_MIN_H, e.clientY - vTop)}px`;
+    /** `getBoundingClientRect` is visual (scaled); width/height are layout (pre-scale). */
+    const wVis = e.clientX - vLeft;
+    const hVis = e.clientY - vTop;
+    el.style.width = `${Math.max(CELL_LAYOUT_MIN_W, layoutDeltaFromViewport(wVis))}px`;
+    el.style.height = `${Math.max(CELL_LAYOUT_MIN_H, layoutDeltaFromViewport(hVis))}px`;
     el.style.minHeight = "0";
     relayoutCanvasBounds();
     return;
@@ -2373,14 +2426,16 @@ function onCellGeomWindowMove(e: PointerEvent) {
     clearPipelineDropHighlights();
     const z = hitTestPipelineDropZone(e.clientX, e.clientY);
     const overPipeline = Boolean(z && pipelineRow.contains(z));
+    const dx = layoutDeltaFromViewport(e.clientX - startX);
+    const dy = layoutDeltaFromViewport(e.clientY - startY);
     if (overPipeline && z) {
       /* Snap preview to home: release here only adds to pipeline, not a canvas move */
       el.style.left = `${origL}px`;
       el.style.top = `${origT}px`;
       z.classList.add("is-drag-over");
     } else {
-      el.style.left = `${origL + e.clientX - startX}px`;
-      el.style.top = `${origT + e.clientY - startY}px`;
+      el.style.left = `${origL + dx}px`;
+      el.style.top = `${origT + dy}px`;
     }
     if (kind === "cell") relayoutCanvasBounds();
   }
@@ -2666,7 +2721,85 @@ function bindPipelineDnD() {
   });
 }
 
+function bindCellsViewportPan() {
+  cellsEl.addEventListener("pointerdown", (e: PointerEvent) => {
+    if (e.button !== 0 || cellsPanState) return;
+    const t = e.target as HTMLElement;
+    if (!cellsEl.contains(t) || t.closest(".cell")) return;
+    e.preventDefault();
+    cellsPanState = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY };
+    cellsEl.classList.add("cells--panning");
+    try {
+      cellsEl.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  });
+
+  cellsEl.addEventListener("pointermove", (e: PointerEvent) => {
+    if (!cellsPanState || e.pointerId !== cellsPanState.pointerId) return;
+    e.preventDefault();
+    const dx = e.clientX - cellsPanState.lastX;
+    const dy = e.clientY - cellsPanState.lastY;
+    cellsEl.scrollLeft -= dx;
+    cellsEl.scrollTop -= dy;
+    cellsPanState.lastX = e.clientX;
+    cellsPanState.lastY = e.clientY;
+  });
+
+  const endCellsPan = (e: PointerEvent) => {
+    if (!cellsPanState || e.pointerId !== cellsPanState.pointerId) return;
+    try {
+      cellsEl.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    cellsEl.classList.remove("cells--panning");
+    cellsPanState = null;
+  };
+  cellsEl.addEventListener("pointerup", endCellsPan);
+  cellsEl.addEventListener("pointercancel", endCellsPan);
+
+  /**
+   * Background only: wheel zooms and does not scroll `.cells`. Over a `.cell`, wheel is untouched so
+   * code/output areas keep normal scrolling.
+   */
+  cellsEl.addEventListener(
+    "wheel",
+    (e: WheelEvent) => {
+      const raw = e.target;
+      const origin = raw instanceof Element ? raw : (raw as Node).parentElement;
+      if (!origin || !cellsEl.contains(origin) || origin.closest(".cell")) return;
+      e.preventDefault();
+      const oldS = cellsViewScale;
+      const step = Math.exp(-e.deltaY * 0.002);
+      const newS = Math.min(CELLS_ZOOM_MAX, Math.max(CELLS_ZOOM_MIN, oldS * step));
+      if (Math.abs(newS - oldS) < 1e-4) return;
+      const rect = cellsEl.getBoundingClientRect();
+      /** Mouse in scrollport coords (border excluded; aligns with scrollLeft / scrollTop). */
+      const mx = e.clientX - rect.left - cellsEl.clientLeft;
+      const my = e.clientY - rect.top - cellsEl.clientTop;
+      const sl0 = cellsEl.scrollLeft;
+      const st0 = cellsEl.scrollTop;
+      const g = CELLS_PAN_GUTTER_PX;
+      cellsViewScale = newS;
+      applyCellsZoomLayout();
+      /** Zoom-wrap origin is offset by pan-arena padding `(g,g)`; keep point under cursor fixed. */
+      const sl1 = g + (sl0 + mx - g) * (newS / oldS) - mx;
+      const st1 = g + (st0 + my - g) * (newS / oldS) - my;
+      cellsEl.scrollLeft = sl1;
+      cellsEl.scrollTop = st1;
+      requestAnimationFrame(() => {
+        cellsEl.scrollLeft = sl1;
+        cellsEl.scrollTop = st1;
+      });
+    },
+    { passive: false },
+  );
+}
+
 bindCellGeometryInteractions();
+bindCellsViewportPan();
 bindPipelineDnD();
 renderPipelineBar();
 initKernelVarsDock();

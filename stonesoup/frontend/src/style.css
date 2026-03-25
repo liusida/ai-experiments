@@ -706,12 +706,10 @@ button.btn-icon svg {
 
 .cells {
   position: relative;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: auto;
   flex: 1 1 0;
   min-height: 0;
   padding-bottom: 8px;
-  cursor: default;
   background-color: var(--vs-bg-editor);
   /* Graph-paper grid */
   background-image:
@@ -727,14 +725,36 @@ button.btn-icon svg {
   background-position: -1px -1px;
 }
 
+/* Padding set in JS (CELLS_PAN_GUTTER_PX); extra scroll range on left/top/right/bottom. */
+.cells-pan-arena {
+  display: inline-block;
+  vertical-align: top;
+}
+
+/* Sized in JS as logical canvas size × zoom so .cells scrollbars match the scaled view. */
+.cells-zoom-wrap {
+  position: relative;
+  overflow: visible;
+}
+
+.cells--panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
 .cells-canvas {
   position: relative;
-  min-width: 100%;
+  cursor: grab;
+}
+
+.cells-canvas:active {
+  cursor: grabbing;
 }
 
 .cell {
   --cell-accent: #1f77b4;
   position: absolute;
+  cursor: default;
   display: flex;
   flex-direction: column;
   border: 1px solid color-mix(in srgb, var(--cell-accent) 42%, transparent);
