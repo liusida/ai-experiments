@@ -22,7 +22,7 @@
 | openai-community/gpt2-large | *Bexley* | Mentions *Aleron* but invents “son Corwin” (wrong) |
 | openai-community/gpt2-xl | *Bexley* | Role error: “Bexley is the wife of Aleron” |
 | EleutherAI/gpt-neo-1.3B | Aleron's husband is Bexley. | Stalls at “The answer is:” |
-| meta-llama/Llama-3.2-1B-Instruct | *Bexley.* | *Damaris* (wrong entity) |
+| meta-llama/Llama-3.2-1B-Instruct | *Bexley.* | “Bexley's wife is *Damaris*.” — wrong; *Damaris* is another fact-row spouse (bleed from context). See **verbatim log** below. |
 | bigcode/starcoder2-3b | Broken (“Aleron's wife is.”) | *Aleron* |
 | Qwen/Qwen3-0.6B | Aleron's husband is Bexley. | Wrong / hedge: says wife “not mentioned in the facts,” etc. |
 
@@ -50,4 +50,18 @@
 | allenai/OLMo-1B-hf | Off-topic memorized text |
 | allenai/OLMo-2-0425-1B | Echoes “Answer with only the final name.” |
 
-**Takeaway (this rerun):** Strong instruct/chat models (TinyLlama, Qwen2.5/3.5, Granite, Llama-3.2-3B) still nail **both** directions. **Qwen3-0.6B** (`enable_thinking=False`) is good forward but fails reverse; **Qwen3-1.7B** is the opposite—interesting asymmetry. BLOOM / StableLM now produce *visible* headlines (token-window + `min_new_tokens`) but answers stay **wrong** for this task. Smaller base GPT-2/OPT/Pythia/RedPajama/OLMo remain poor fits.
+## meta-llama/Llama-3.2-1B-Instruct — verbatim single-model run
+
+Hub load line omitted; console showed `torch_dtype` deprecation from older calls (script now uses `dtype=` in `from_pretrained`). Transformers also noted unused generation flags unless `TRANSFORMERS_VERBOSITY=info`.
+
+**Forward (expected *Bexley*):**
+
+> Bexley.
+
+**Reverse (expected *Aleron*):**
+
+> Bexley's wife is Damaris.
+
+So the 1B Instruct gets forward right but reverse collapses to another name from the fact sheet—contrast **Llama-3.2-3B-Instruct**, which matched both golds in the sweep.
+
+**Takeaway (this rerun):** Strong instruct/chat models (TinyLlama, Qwen2.5/3.5, Granite, **Llama-3.2-3B**) still nail **both** directions; **Llama-3.2-1B** does not (reverse error above). **Qwen3-0.6B** (`enable_thinking=False`) is good forward but fails reverse; **Qwen3-1.7B** is the opposite—interesting asymmetry. BLOOM / StableLM now produce *visible* headlines (token-window + `min_new_tokens`) but answers stay **wrong** for this task. Smaller base GPT-2/OPT/Pythia/RedPajama/OLMo remain poor fits.

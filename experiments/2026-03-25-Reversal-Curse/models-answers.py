@@ -50,7 +50,7 @@ def load_causal_lm(model_name: str) -> tuple[AutoModelForCausalLM, AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     _ensure_pad_token(tokenizer)
     kwargs: dict = {
-        "torch_dtype": DTYPE,
+        "dtype": DTYPE,
         "trust_remote_code": True,
     }
     if DEVICE.type == "cuda":
@@ -254,6 +254,7 @@ REVERSAL_CURSE_MODE: str = "both"
 
 # %% Model IDs (edit or subset for faster runs)
 MULTI_MODEL_INVESTIGATION_NAMES: tuple[str, ...] = (
+    "meta-llama/Llama-3.2-1B-Instruct",
     "distilgpt2",
     "openai-community/gpt2-medium",
     "openai-community/gpt2-large",
@@ -265,7 +266,6 @@ MULTI_MODEL_INVESTIGATION_NAMES: tuple[str, ...] = (
     "EleutherAI/gpt-neo-1.3B",
     "EleutherAI/pythia-1b",
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    "meta-llama/Llama-3.2-1B-Instruct",
     "stabilityai/stablelm-2-1_6b",
     "HuggingFaceTB/SmolLM2-1.7B-Instruct",
     "allenai/OLMo-1B-hf",
