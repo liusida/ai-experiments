@@ -8,6 +8,8 @@ version = "0.0.0"
 description = "Personal experiments (Stonesoup cell runner, demos)"
 requires-python = ">=3.11"
 dependencies = [
+    "einops>=0.8.0",
+    "sentencepiece>=0.2.0",
     "tqdm>=4.66",
 ]
 
