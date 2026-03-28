@@ -43,13 +43,15 @@ After editing or creating an experiment `.py`, **do not execute it** (no `uv run
 
 ### Stdout render hint (optional)
 
-When the output pane is in **Auto** mode, Stonesoup guesses **text / HTML / Markdown** from the payload. To skip guessing, print this as the **first line** of stdout (then everything else on following lines):
+**Default:** stdout is shown as **plain text** (escaped). Stonesoup does **not** infer HTML or Markdown from the payload.
 
-`# stonesoup:render=text` · `html` · `markdown` (alias `md`) · `auto` (explicit “use heuristics”; same as omitting the line).
+To get **rich** output, print this as the **first line** of stdout (then the payload on following lines):
+
+`# stonesoup:render=html` · `markdown` or `md` · `text` or `auto` (both mean plain text, same as omitting the hint).
 
 The UI **removes** that line from the stored stdout (copy-to-clipboard and display body never include it).
 
-For **HTML** or **Markdown** stdout, the output header shows a small **HTML** / **MD** chip; click it to toggle **escaped plain text** and back (plain-only stdout has no chip).
+For **HTML** or **Markdown** (hinted) stdout, the output header shows a small **HTML** / **MD** chip; click it to toggle **escaped plain text** and back.
 
 Helpers when `stonesoup` is installed editable: `from stonesoup import STONESOUP_RENDER_HTML` or `stonesoup_render_prefix("html")` — same strings with a trailing newline.
 
