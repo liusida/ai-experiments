@@ -29,10 +29,10 @@ After editing or creating an experiment `.py`, **do not execute it** (no `uv run
 
 ## Runnable cells
 
-- **Kernel is shared** across cells for one watch session: globals persist. Order matters unless you **Reset kernel** in the UI.
+- **Kernel is shared** across cells **for that watched `.py` only** (switching **Watch** to another script uses a separate namespace). Globals persist while you stay on the file. Order matters unless you click **Reset** (restarts the backend) or a kernel is evicted when the cache is full.
 - **Optional per-cell input:** end the ``# %%`` line with ``# stonesoup:cell-input`` (after the title). Only those cells get a text field next to **Run**; its value is injected as the string global **`CELL_INPUT`** (pipelines too). Example marker: `# %% Try a word # stonesoup:cell-input`. In code: `print(CELL_INPUT)`.
 - Design each cell to be **re-runnable** where practical: set `MODEL_NAME`, paths, and flags **inside** the cell that needs them (pattern in `demo.py`).
-- **Prefer standalone cells:** when you can, make a cell self-contained so re-running it after a **Reset kernel** or out of order does not break. If a variable or helper is **only used in one cell**, define it **inside that cell** instead of at the top of the file or in the imports cell—this keeps the dependency obvious and avoids stale globals from an earlier run.
+- **Prefer standalone cells:** when you can, make a cell self-contained so re-running it after **Reset** or out of order does not break. If a variable or helper is **only used in one cell**, define it **inside that cell** instead of at the top of the file or in the imports cell—this keeps the dependency obvious and avoids stale globals from an earlier run.
 - Put **shared** setup in the first cell (imports, paths, constants, helpers used in multiple cells); put **cell-local** knobs, small helpers, and one-off formatting in the cells that use them.
 
 ## Outputs

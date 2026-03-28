@@ -793,16 +793,54 @@ function bringCellToFront(cell: HTMLElement) {
   cell.style.zIndex = String(cellZStackCounter);
 }
 
+/** Cell indices currently executing (mirrors `cell-running` on the canvas; pipeline chips sync on rerender). */
+const runningCellIndices = new Set<number>();
+
+/** In-progress stdout/stderr merged from WebSocket `run_stream` (lost on `renderCells` unless restored). */
+const cellStreamBufferByIndex = new Map<number, string>();
+
+function applyPipelineChipRunningClassesForIndex(index: number) {
+  const stack = document.getElementById("pipelines-stack");
+  if (!stack) return;
+  const on = runningCellIndices.has(index);
+  stack
+    .querySelectorAll<HTMLElement>(`.pipeline-chip.pipeline-chip-cell[data-cell-index="${index}"]`)
+    .forEach((chip) => {
+      chip.classList.toggle("pipeline-chip-running", on);
+    });
+}
+
+function applyAllPipelineChipRunningClasses() {
+  const stack = document.getElementById("pipelines-stack");
+  if (!stack) return;
+  stack.querySelectorAll<HTMLElement>(".pipeline-chip.pipeline-chip-cell").forEach((chip) => {
+    const ci = Number(chip.dataset.cellIndex);
+    chip.classList.toggle(
+      "pipeline-chip-running",
+      Number.isInteger(ci) && runningCellIndices.has(ci),
+    );
+  });
+}
+
 function setCellRunningState(index: number, running: boolean) {
+  if (running) runningCellIndices.add(index);
+  else {
+    runningCellIndices.delete(index);
+    cellStreamBufferByIndex.delete(index);
+  }
+
   const cell = cellsCanvas.querySelector<HTMLElement>(`.cell[data-pipeline-cell-drag="${index}"]`);
-  if (!cell) return;
-  cell.classList.toggle("cell-running", running);
-  if (running) bringCellToFront(cell);
+  if (cell) {
+    cell.classList.toggle("cell-running", running);
+    if (running) bringCellToFront(cell);
+  }
+  applyPipelineChipRunningClassesForIndex(index);
 }
 
 
 /** Clear output and show the output strip so streamed stdout/stderr can appear while the cell runs. */
 function prepareCellStreamUi(index: number) {
+  cellStreamBufferByIndex.set(index, "");
   const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
   if (outEl) {
     outEl.textContent = "";
@@ -814,8 +852,25 @@ function prepareCellStreamUi(index: number) {
 }
 
 function appendCellStreamChunk(index: number, text: string) {
+  const next = (cellStreamBufferByIndex.get(index) ?? "") + text;
+  cellStreamBufferByIndex.set(index, next);
   const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
-  if (outEl) outEl.textContent += text;
+  if (outEl) outEl.textContent = next;
+}
+
+/** File watcher can broadcast `cells` during a long run; `renderCells` rebuilds DOM and drops live stream text + running state until restored. */
+function restoreLiveExecutionUiAfterCellRender(index: number) {
+  if (!runningCellIndices.has(index)) return;
+  const text = cellStreamBufferByIndex.get(index) ?? "";
+  setCellOutputBlockVisible(index, true);
+  const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
+  if (outEl) {
+    outEl.className = "out out-streaming";
+    outEl.textContent = text;
+  }
+  syncCellCompactClassForIndex(index);
+  /* Re-apply full running chrome (yellow outline, z-index, pipeline chips) on new nodes. */
+  setCellRunningState(index, true);
 }
 
 function applyCellsFromServer(
@@ -1753,6 +1808,8 @@ function renderPipelineBar() {
 
   syncPipelineAbortButtons();
 
+  applyAllPipelineChipRunningClasses();
+
   requestAnimationFrame(() => {
     updatePipelineLineBreakMarkers();
   });
@@ -1929,8 +1986,7 @@ function applyFloatingLayout() {
       cell.style.top = `${Math.max(0, saved.top)}px`;
       cell.style.width = `${Math.max(CELL_LAYOUT_MIN_W, saved.width)}px`;
       /* Compact cards save a small height; do not floor to CELL_LAYOUT_MIN_H or every header-only cell becomes a tall empty box after any full re-layout. */
-      const showOutForLayout =
-        hasCellBodyOutput(outputs.get(idx)) || isOutputStripVisible(idx);
+      const showOutForLayout = Number.isInteger(idx) ? cellHasExpandedOutputUi(idx) : false;
       const compact = Number.isInteger(idx) && !showOutForLayout;
       /* Do not set inline min-height: 0 here — it overrides `.cell-custom-geometry { min-height: 200px }` and
          sticks until the next full layout, so cells collapse after pipeline runs. Let classes control min-height. */
@@ -2022,7 +2078,7 @@ function renderCells(cells: Cell[], path: string | null) {
     if (stale) div.classList.add("cell-stale");
     applyCellColorVars(div, c.index);
     const prev = outputs.get(c.index);
-    const showOut = hasCellBodyOutput(prev);
+    const showOut = shouldRevealOutputStrip(prev);
     const outRendered = showOut && prev ? renderOutputInnerHtml(prev, c.index) : null;
     const outRichClass = outRendered?.richLayout ? " out-rich" : "";
     if (!showOut) div.classList.add("cell-compact");
@@ -2113,6 +2169,15 @@ function renderCells(cells: Cell[], path: string | null) {
   applyFloatingLayout();
   renderPipelineBar();
   highlightPipelineCells();
+
+  if (runningCellIndices.size > 0) {
+    requestAnimationFrame(() => {
+      for (const idx of [...runningCellIndices]) {
+        restoreLiveExecutionUiAfterCellRender(idx);
+      }
+      applyFloatingLayout();
+    });
+  }
 
   if (pathChangedForScrollReset) {
     const g = CELLS_PAN_GUTTER_PX;
@@ -2237,8 +2302,8 @@ function refreshCellOutputView(index: number) {
   const o = outputs.get(index);
   const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
   if (!outEl || !o) return;
-  const visible = hasCellBodyOutput(o);
-  if (!visible) return;
+  const reveal = shouldRevealOutputStrip(o);
+  if (!reveal) return;
   if (outEl.classList.contains("out-streaming")) return;
   const r = renderOutputInnerHtml(o, index);
   outEl.className = "out " + (o.ok ? "ok" : "err") + (r.richLayout ? " out-rich" : "");
@@ -2251,6 +2316,15 @@ function hasCellBodyOutput(o: { stdout: string; stderr: string } | undefined): b
   return Boolean(o.stdout.trim() || o.stderr.trim());
 }
 
+/** Open the output strip for failed runs even if stderr/stdout are empty (kernel/network edge cases). */
+function shouldRevealOutputStrip(
+  o: { stdout: string; stderr: string; ok?: boolean } | undefined,
+): boolean {
+  if (!o) return false;
+  if (o.ok === false) return true;
+  return hasCellBodyOutput(o);
+}
+
 function setCellOutputBlockVisible(index: number, visible: boolean) {
   const block = cellsEl.querySelector<HTMLElement>(`[data-output-block="${index}"]`);
   if (block) block.style.display = visible ? "flex" : "none";
@@ -2261,15 +2335,25 @@ function isOutputStripVisible(index: number): boolean {
   const block = cellsEl.querySelector<HTMLElement>(`[data-output-block="${index}"]`);
   if (!block) return false;
   const d = (block.style.display || "").toLowerCase();
-  return d === "flex" || d === "block";
+  if (d === "flex" || d === "block") return true;
+  /* Fallback: inline style can be empty in edge cases; rely on computed display. */
+  return getComputedStyle(block).display !== "none";
+}
+
+/** Output strip should stay uncollapsed: saved result, visible strip, or cell currently executing (tqdm / model load). */
+function cellHasExpandedOutputUi(index: number): boolean {
+  return (
+    shouldRevealOutputStrip(outputs.get(index)) ||
+    isOutputStripVisible(index) ||
+    runningCellIndices.has(index)
+  );
 }
 
 /** Toolbar lives in `.cell-body`; compact = no output so the card is header-only. */
 function syncCellCompactClassForIndex(index: number) {
   const cell = cellsCanvas.querySelector<HTMLElement>(`.cell[data-pipeline-cell-drag="${index}"]`);
   if (!cell) return;
-  const showOut =
-    hasCellBodyOutput(outputs.get(index)) || isOutputStripVisible(index);
+  const showOut = cellHasExpandedOutputUi(index);
   cell.classList.toggle("cell-compact", !showOut);
 }
 
@@ -2342,8 +2426,9 @@ async function postWatch() {
 
 async function runCell(index: number, inject?: Record<string, unknown> | null) {
   const btn = cellsEl.querySelector<HTMLButtonElement>(`[data-run="${index}"]`);
-  prepareCellStreamUi(index);
+  /* Match WebSocket run_start order: running flag first so compact/layout never clips live output (tqdm). */
   setCellRunningState(index, true);
+  prepareCellStreamUi(index);
   if (btn) btn.disabled = true;
   try {
     const body: Record<string, unknown> = {
@@ -2367,12 +2452,12 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
     if (presetRichKind(nextOut) === null) cellStdoutPlainText.delete(index);
     outputs.set(index, nextOut);
     const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
-    const visible = hasCellBodyOutput(nextOut);
-    setCellOutputBlockVisible(index, visible);
+    const reveal = shouldRevealOutputStrip(nextOut);
+    setCellOutputBlockVisible(index, reveal);
     if (outEl) {
       outEl.classList.remove("out-streaming");
-      const baseClass = visible ? "out " + (j.ok ? "ok" : "err") : "out out-pending";
-      if (visible) {
+      const baseClass = reveal ? "out " + (j.ok ? "ok" : "err") : "out out-pending";
+      if (reveal) {
         refreshCellOutputView(index);
       } else {
         outEl.className = baseClass;
@@ -2382,6 +2467,15 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
     }
     syncCellCompactClassForIndex(index);
     applyFloatingLayout();
+    if (!j.ok) {
+      const line =
+        nextOut.stderr.trim().split("\n")[0] || nextOut.stdout.trim().split("\n")[0] || "";
+      setStatus(
+        line
+          ? `Cell ${index} failed — ${line.length > 100 ? `${line.slice(0, 100)}…` : line}`
+          : `Cell ${index} failed — see output below`,
+      );
+    }
     if (j.ok) {
       staleCells.delete(index);
       syncCellStaleClassForIndex(index);

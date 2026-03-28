@@ -637,6 +637,20 @@ button.btn-icon svg {
   color: var(--cell-accent);
 }
 
+.pipeline-chip.pipeline-chip-cell.pipeline-chip-running {
+  z-index: 4;
+  border-color: var(--vs-running-border);
+  outline: 2px solid var(--vs-running-border);
+  outline-offset: 0;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vs-running-border) 50%, transparent),
+    0 4px 18px var(--vs-running-glow);
+}
+
+.pipeline-chip.pipeline-chip-cell.pipeline-chip-running .chip-idx {
+  color: var(--vs-running-fg);
+}
+
 /* Remove: out of flex row (saves width); on hover, overlay right edge on title — stays clickable inside chip. */
 .pipeline-chip.pipeline-chip-cell button[data-p-remove] {
   position: absolute;
@@ -737,6 +751,15 @@ button.btn-icon svg {
 .cell.pipeline-step {
   outline: 1px solid color-mix(in srgb, var(--cell-accent) 52%, transparent);
   outline-offset: 0;
+}
+
+/* Running state wins visually when a cell is also marked as in-pipeline. */
+.cell.pipeline-step.cell-running {
+  outline: 2px solid var(--vs-running-border);
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vs-running-border) 50%, transparent),
+    0 6px 28px var(--vs-running-glow);
 }
 
 .cell.cell-pipeline-chip-hover {
@@ -956,6 +979,11 @@ button.btn-icon svg {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--vs-running-border) 50%, transparent),
     0 6px 28px var(--vs-running-glow);
+}
+
+/* Keep a floor while tqdm / long loads stream so custom-height cards do not clip output (overflow: hidden on .cell). */
+.cell.cell-running .cell-output-block {
+  min-height: 5.5rem;
 }
 
 .cell.cell-stale {

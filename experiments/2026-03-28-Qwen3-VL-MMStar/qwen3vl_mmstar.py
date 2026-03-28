@@ -12,7 +12,7 @@ Install (once), from repo root::
   uv pip install datasets accelerate
   uv pip install "git+https://github.com/huggingface/transformers"
 
-**Stonesoup:** Watch this file; run cells in order after **Reset kernel** when needed.
+**Stonesoup:** Watch this file; run cells in order after **Reset** when needed (restarts backend).
 **Load MMStar row** and **Generate + HTML report** print HTML with a leading ``# stonesoup:render=html`` line
 (stripped in the UI; see ``EXPERIMENT_PYTHON.md``) so the pane does not rely on heuristics.
 
@@ -29,7 +29,7 @@ from pathlib import Path
 
 import torch
 from datasets import load_dataset
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers import AutoModelForCausalLM, AutoProcessor, Qwen3VLForConditionalGeneration
 
 try:
     from stonesoup import STONESOUP_RENDER_HTML
@@ -57,6 +57,10 @@ def pil_png_data_uri(im) -> str:
     im.save(buf, format="PNG")
     b64 = base64.standard_b64encode(buf.getvalue()).decode("ascii")
     return f"data:image/png;base64,{b64}"
+
+
+def n_params(module: torch.nn.Module) -> int:
+    return sum(p.numel() for p in module.parameters())
 
 
 # %% Load MMStar row
@@ -256,3 +260,95 @@ _report = (
     f"</div>"
 )
 print(STONESOUP_RENDER_HTML + _report)
+
+# %% Parameter counts (visual / text / merger / lm_head)
+
+_core = model.model
+_visual = _core.visual
+_language = _core.language_model
+
+_param_ids_visual = {id(p) for p in _visual.parameters()}
+_param_ids_language = {id(p) for p in _language.parameters()}
+
+n_visual = n_params(_visual)
+n_text = n_params(_language)
+n_merger = sum(
+    p.numel()
+    for p in _core.parameters()
+    if id(p) not in _param_ids_visual and id(p) not in _param_ids_language
+)
+n_lm_head_total = n_params(model.lm_head)
+n_lm_head_unique = sum(
+    p.numel() for p in model.lm_head.parameters() if id(p) not in _param_ids_language
+)
+n_total = sum(p.numel() for p in model.parameters())
+
+print("Qwen3VLForConditionalGeneration — trainable parameter counts")
+print(f"  visual (model.model.visual):     {n_visual:>14,}")
+print(f"  text (model.model.language_model): {n_text:>14,}")
+print(
+    "  merger / other (on Qwen3VLModel, not in visual or LM subtree):",
+    f"{n_merger:>14,}",
+)
+print(f"  lm_head (all tensors):           {n_lm_head_total:>14,}")
+if n_lm_head_unique != n_lm_head_total:
+    print(
+        "    └─ params not shared with language_model:",
+        f"{n_lm_head_unique:>10,}",
+        "(tie with embed weights)",
+    )
+print(f"  ─────────────────────────────────────────────")
+print(f"  sum of four lines above:         {n_visual + n_text + n_merger + n_lm_head_total:>14,}")
+print(f"  model (dedup shared storage):    {n_total:>14,}")
+if n_visual + n_text + n_merger + n_lm_head_total != n_total:
+    print(
+        "(sum can exceed total if lm_head shares weights with language_model;",
+        "merger is 0 if all trunk weights live only under visual + language_model.)",
+    )
+
+_children = list(_core.named_children())
+print("model.model top-level children:", [k for k, _ in _children])
+
+# %% Qwen3-8B text-only: load
+
+TEXT_ONLY_MODEL_ID = "Qwen/Qwen3-8B"
+
+qwen3_8b_text = AutoModelForCausalLM.from_pretrained(
+    TEXT_ONLY_MODEL_ID,
+    dtype="auto" if DEVICE.type == "cuda" else torch.float32,
+    device_map="auto" if DEVICE.type == "cuda" else None,
+)
+if DEVICE.type != "cuda":
+    qwen3_8b_text = qwen3_8b_text.to(DEVICE)
+
+# %% Compare Qwen3-VL-8B-Instruct and Qwen3-8B (text-only)
+
+_n_vl = sum(p.numel() for p in model.parameters())
+_n_8b = sum(p.numel() for p in qwen3_8b_text.parameters())
+
+print("Loaded for comparison:", TEXT_ONLY_MODEL_ID)
+print("(Two ~8B checkpoints in memory can be tight; skip this cell or reset kernel if OOM.)")
+print()
+
+if hasattr(qwen3_8b_text, "model") and hasattr(qwen3_8b_text, "lm_head"):
+    _ids_lm = {id(p) for p in qwen3_8b_text.model.parameters()}
+    _n_trunk = n_params(qwen3_8b_text.model)
+    _n_lm = n_params(qwen3_8b_text.lm_head)
+    _n_lm_u = sum(
+        p.numel() for p in qwen3_8b_text.lm_head.parameters() if id(p) not in _ids_lm
+    )
+    print("Qwen3-8B (AutoModelForCausalLM) — breakdown")
+    print(f"  trunk (.model):                    {_n_trunk:>14,}")
+    print(f"  lm_head (all tensors):             {_n_lm:>14,}")
+    if _n_lm_u != _n_lm:
+        print(
+            "    └─ not shared with .model:",
+            f"{_n_lm_u:>10,}",
+        )
+
+print(f"  deduplicated total:                {_n_8b:>14,}")
+print()
+print("Side-by-side (storage-dedup totals)")
+print(f"  Qwen3-VL-8B-Instruct ({MODEL_ID}): {_n_vl:>14,}")
+print(f"  Qwen3-8B ({TEXT_ONLY_MODEL_ID}):     {_n_8b:>14,}")
+print(f"  Δ (VL − text-only):                 {_n_vl - _n_8b:>14,}")

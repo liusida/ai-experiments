@@ -13,3 +13,8 @@ print("""
 
 This is a markdown example.
 """)
+
+# %% Test variables
+
+var = "Hello, world!"
+print(var)
