@@ -1425,7 +1425,8 @@ button.btn-icon svg {
 }
 
 .ws-dot.on {
-  background: var(--vs-fg-dim);
+  background: var(--vs-link);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--vs-link) 45%, transparent);
 }
 
 /* --- kernel variables: float over cells (bottom-left), no layout strip --- */

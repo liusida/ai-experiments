@@ -138,7 +138,7 @@ const scriptPickerDir =
 
 app.innerHTML = `
   <div class="toolbar">
-    <span class="ws-dot" id="ws-dot" title="WebSocket"></span>
+    <span class="ws-dot" id="ws-dot" title="Live reload: disconnected" aria-label="WebSocket disconnected"></span>
     <span class="script-picker">
       <select id="folder-select" title="Experiment folder under list root" aria-label="Folder"></select>
       <select id="file-select" title="Python file in folder" aria-label="File"></select>
@@ -424,7 +424,7 @@ const staleCells = new Set<number>();
 /** Per-cell run input text; merged into kernel as ``CELL_INPUT`` (survives UI re-render). */
 const cellRunInputDraft = new Map<number, string>();
 
-/** How stdout is interpreted when not viewing as plain text (hint and/or heuristics). */
+/** How stdout is interpreted when not forced to plain via chip; only ``html`` / ``markdown`` enable rich rendering (first-line hint). */
 type StdoutKind = "text" | "html" | "markdown";
 
 /** Kernel result for one cell run; ``renderHint`` from optional first stdout line ``# stonesoup:render=…`` (stripped from ``stdout``). */
@@ -436,7 +436,7 @@ const cellStdoutPlainText = new Set<number>();
 
 const STONESOUP_RENDER_FIRST_LINE = /^\s*#\s*stonesoup:render\s*=\s*(auto|text|html|markdown|md)\s*$/i;
 
-/** Strip leading ``# stonesoup:render=…`` line from captured stdout; values ``md`` → markdown, ``auto`` → no hint (heuristics). */
+/** Strip leading ``# stonesoup:render=…`` line; ``md`` → markdown, ``auto``/``text``/omitted → plain stdout (no guessing). */
 function peelStonesoupRenderHint(raw: string): { body: string; renderHint: StdoutKind | null } {
   const s = raw.replace(/^\ufeff/, "");
   if (!s) return { body: "", renderHint: null };
@@ -885,9 +885,13 @@ function connectWs() {
   ws = new WebSocket(wsUrl());
   ws.onopen = () => {
     wsDot.classList.add("on");
+    wsDot.title = "Live reload: connected";
+    wsDot.setAttribute("aria-label", "WebSocket connected");
   };
   ws.onclose = () => {
     wsDot.classList.remove("on");
+    wsDot.title = "Live reload: disconnected (retrying…)";
+    wsDot.setAttribute("aria-label", "WebSocket disconnected");
     setTimeout(connectWs, 2000);
   };
   ws.onmessage = (ev) => {
@@ -2004,37 +2008,10 @@ function formatOut(o: CellOutput) {
   return s;
 }
 
-/** HTML fragment: optional prolog, then a tag name, closing slash-tag, or !DOCTYPE. */
-function looksLikeHtmlFragment(stdout: string): boolean {
-  const t = stdout.trimStart();
-  return /^<\s*([a-zA-Z][\w:-]*|\/\s*[a-zA-Z]|!DOCTYPE\b)/.test(t);
-}
-
-/** Cheap Markdown signals beyond “plain prose” (see EXPERIMENT / demo prints). */
-function looksLikeMarkdown(s: string): boolean {
-  if (/\*\*[\s\S]*?\*\*/.test(s)) return true;
-  if (/__[\s\S]*?__/.test(s)) return true;
-  if (/`[^`]+`/.test(s)) return true;
-  if (/\]\([^)]+\)/.test(s)) return true;
-  if (/^#{1,6}\s/m.test(s)) return true;
-  if (/^\s*[-*+]\s/m.test(s)) return true;
-  if (/^\s*\d+\.\s/m.test(s)) return true;
-  if (/\|[^\n]+\|/.test(s)) return true;
-  return false;
-}
-
-function detectStdoutKind(stdout: string): StdoutKind {
-  if (!stdout.trim()) return "text";
-  if (looksLikeHtmlFragment(stdout)) return "html";
-  if (looksLikeMarkdown(stdout)) return "markdown";
-  return "text";
-}
-
-/** Preset rich kind for stdout (hint overrides heuristics); ``null`` → plain-only, no toggle chip. */
+/** Rich output only when the cell sent ``# stonesoup:render=html|md``; otherwise plain text. */
 function presetRichKind(o: CellOutput): "html" | "markdown" | null {
-  const k: StdoutKind = o.renderHint ?? detectStdoutKind(o.stdout);
-  if (k === "html") return "html";
-  if (k === "markdown") return "markdown";
+  if (o.renderHint === "html") return "html";
+  if (o.renderHint === "markdown") return "markdown";
   return null;
 }
 
@@ -2054,7 +2031,7 @@ function outputPlainToggleTitle(preset: "html" | "markdown", asPlain: boolean): 
   return `Showing ${rich}. Click to view as plain text.`;
 }
 
-/** Kernel HTML / MD is sanitized before ``innerHTML`` (XSS-safe). */
+/** Kernel HTML / MD only with explicit first-line hint; sanitized before ``innerHTML`` (XSS-safe). */
 function renderStdoutHtml(
   stdout: string,
   asPlainText: boolean,
@@ -2064,15 +2041,14 @@ function renderStdoutHtml(
   if (asPlainText) {
     return { html: escapeHtml(stdout), rich: false };
   }
-  const effective: StdoutKind = renderHint ?? detectStdoutKind(stdout);
-  if (effective === "text") {
-    return { html: escapeHtml(stdout), rich: false };
-  }
-  if (effective === "html") {
+  if (renderHint === "html") {
     return { html: DOMPurify.sanitize(stdout), rich: true };
   }
-  const raw = marked.parse(stdout, { async: false }) as string;
-  return { html: DOMPurify.sanitize(raw), rich: true };
+  if (renderHint === "markdown") {
+    const raw = marked.parse(stdout, { async: false }) as string;
+    return { html: DOMPurify.sanitize(raw), rich: true };
+  }
+  return { html: escapeHtml(stdout), rich: false };
 }
 
 function renderOutputInnerHtml(o: CellOutput, cellIndex: number): { html: string; richLayout: boolean } {
