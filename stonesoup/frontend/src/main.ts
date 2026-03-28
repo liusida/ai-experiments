@@ -1,6 +1,8 @@
 import "./style.css";
+import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
 import python from "highlight.js/lib/languages/python";
+import { marked } from "marked";
 
 hljs.registerLanguage("python", python);
 
@@ -82,6 +84,21 @@ function writeCellLayoutsCookie(all: Record<string, CellLayoutsFileMap>) {
   document.cookie = `${CELL_LAYOUTS_COOKIE}=${encodeURIComponent(JSON.stringify(all))}; Path=/; Max-Age=${WATCH_PATH_COOKIE_MAX_AGE}; SameSite=Lax`;
 }
 
+
+function resetCellsToAutoLayout(): void {
+  manualLayoutByCellIdx.clear();
+  cellPositions.clear();
+  lastLayoutCols = -1;
+  const pathKey = layoutStoragePath();
+  if (pathKey && pathKey !== "_unset") {
+    const all = parseCellLayoutsCookie();
+    delete all[pathKey];
+    writeCellLayoutsCookie(all);
+  }
+  applyFloatingLayout();
+  setStatus("Cells: automatic layout");
+}
+
 function layoutStoragePath(): string {
   return pathInput.value.trim() || lastPath || "_unset";
 }
@@ -138,7 +155,9 @@ app.innerHTML = `
     <div class="pipelines-stack" id="pipelines-stack"></div>
   </div>
   <div class="workspace">
-    <div class="cells" id="cells"><div class="cells-pan-arena" id="cells-pan-arena"><div class="cells-zoom-wrap" id="cells-zoom-wrap"><div class="cells-canvas" id="cells-canvas"></div></div></div></div>
+    <div class="cells" id="cells">
+      <div class="cells-pan-arena" id="cells-pan-arena"><div class="cells-zoom-wrap" id="cells-zoom-wrap"><div class="cells-canvas" id="cells-canvas"></div></div></div>
+    </div>
     <div class="kernel-vars-dock" id="kernel-vars-dock">
       <div class="kernel-vars-panel" id="kernel-vars-panel">
         <div class="kernel-vars-toolbar">
@@ -154,10 +173,13 @@ app.innerHTML = `
           <p class="kernel-vars-empty" id="kernel-vars-empty" hidden>No user variables (only builtins).</p>
         </div>
       </div>
-      <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show kernel variables">
-        <span class="kernel-vars-chip-icon" aria-hidden="true">{ }</span>
-        <span class="kernel-vars-chip-count" id="kernel-vars-count"></span>
-      </button>
+      <div class="kernel-vars-dock-bar">
+        <button type="button" class="cells-auto-fab" id="btn-cells-auto-layout" title="Discard saved positions and reflow cells into the automatic grid (fixes overlap after output or resize)" aria-label="Automatic cell layout">↻</button>
+        <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show kernel variables">
+          <span class="kernel-vars-chip-icon" aria-hidden="true">{ }</span>
+          <span class="kernel-vars-chip-count" id="kernel-vars-count"></span>
+        </button>
+      </div>
     </div>
   </div>
   <div id="status-toast" class="status-toast" role="status" aria-live="polite"></div>
@@ -169,6 +191,7 @@ const pathInput = app.querySelector<HTMLInputElement>("#path-input")!;
 const btnWatch = app.querySelector<HTMLButtonElement>("#btn-watch")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
 const statusToastEl = app.querySelector<HTMLDivElement>("#status-toast")!;
+const btnCellsAutoLayout = app.querySelector<HTMLButtonElement>("#btn-cells-auto-layout")!;
 const cellsEl = app.querySelector<HTMLDivElement>("#cells")!;
 const cellsPanArena = app.querySelector<HTMLDivElement>("#cells-pan-arena")!;
 const cellsZoomWrap = app.querySelector<HTMLDivElement>("#cells-zoom-wrap")!;
@@ -394,13 +417,39 @@ let revision = 0;
 let lastCells: Cell[] = [];
 let lastPath: string | null = null;
 let ws: WebSocket | null = null;
-const outputs = new Map<number, { stdout: string; stderr: string; ok: boolean }>();
 const expanded = new Set<number>();
 /** Cell indices whose source changed on disk since last successful run (merged from server + cleared on run). */
 const staleCells = new Set<number>();
 
 /** Per-cell run input text; merged into kernel as ``CELL_INPUT`` (survives UI re-render). */
 const cellRunInputDraft = new Map<number, string>();
+
+/** How stdout is interpreted when not viewing as plain text (hint and/or heuristics). */
+type StdoutKind = "text" | "html" | "markdown";
+
+/** Kernel result for one cell run; ``renderHint`` from optional first stdout line ``# stonesoup:render=…`` (stripped from ``stdout``). */
+type CellOutput = { stdout: string; stderr: string; ok: boolean; renderHint?: StdoutKind | null };
+const outputs = new Map<number, CellOutput>();
+
+/** When set, stdout is shown escaped (toggle chip); only meaningful for HTML/MD preset outputs. */
+const cellStdoutPlainText = new Set<number>();
+
+const STONESOUP_RENDER_FIRST_LINE = /^\s*#\s*stonesoup:render\s*=\s*(auto|text|html|markdown|md)\s*$/i;
+
+/** Strip leading ``# stonesoup:render=…`` line from captured stdout; values ``md`` → markdown, ``auto`` → no hint (heuristics). */
+function peelStonesoupRenderHint(raw: string): { body: string; renderHint: StdoutKind | null } {
+  const s = raw.replace(/^\ufeff/, "");
+  if (!s) return { body: "", renderHint: null };
+  const nl = s.indexOf("\n");
+  const first = (nl === -1 ? s : s.slice(0, nl)).replace(/\r$/, "");
+  const rest = nl === -1 ? "" : s.slice(nl + 1);
+  const m = first.match(STONESOUP_RENDER_FIRST_LINE);
+  if (!m?.[1]) return { body: s, renderHint: null };
+  const v = m[1].toLowerCase();
+  const mode = (v === "md" ? "markdown" : v) as StdoutKind | "auto";
+  const renderHint: StdoutKind | null = mode === "auto" ? null : mode;
+  return { body: rest, renderHint };
+}
 
 function cellRunInputValue(index: number): string {
   const el = cellsEl.querySelector<HTMLInputElement>(`[data-run-input="${index}"]`);
@@ -427,6 +476,9 @@ function pruneOutputsAndExpanded(cellCount: number) {
   }
   for (const k of [...expanded]) {
     if (!Number.isInteger(k) || k < 0 || k >= cellCount) expanded.delete(k);
+  }
+  for (const k of [...cellStdoutPlainText.keys()]) {
+    if (!Number.isInteger(k) || k < 0 || k >= cellCount) cellStdoutPlainText.delete(k);
   }
 }
 
@@ -734,6 +786,7 @@ function applyCellsFromServer(
   const pathChanged = (incomingPath ?? "") !== (lastPath ?? "");
   if (pathChanged || opts?.forceResetOutputs) {
     outputs.clear();
+    cellStdoutPlainText.clear();
     expanded.clear();
     staleCells.clear();
   }
@@ -1842,6 +1895,8 @@ function renderCells(cells: Cell[], path: string | null) {
     applyCellColorVars(div, c.index);
     const prev = outputs.get(c.index);
     const showOut = hasCellBodyOutput(prev);
+    const outRendered = showOut && prev ? renderOutputInnerHtml(prev, c.index) : null;
+    const outRichClass = outRendered?.richLayout ? " out-rich" : "";
     const exp = expanded.has(c.index);
     if (!exp && !showOut) div.classList.add("cell-compact");
     const runInputHtml = c.cell_input
@@ -1866,13 +1921,16 @@ function renderCells(cells: Cell[], path: string | null) {
           <pre class="source full"><code class="language-python hljs">${safeHighlightPython(c.source)}</code></pre>
         </div>
         <div class="cell-output-block" data-output-block="${c.index}" style="display:${showOut ? "flex" : "none"}">
-          <div class="out-label" draggable="false">Output</div>
-          <div class="out ${prev && !prev.ok ? "err" : prev ? "ok" : "out-pending"}" draggable="false" data-out="${c.index}" title="Click to copy">${showOut && prev ? escapeHtml(formatOut(prev)) : ""}</div>
+          <div class="out-label-row" draggable="false">
+            <span class="out-label" draggable="false">Output</span>
+          </div>
+          <div class="out ${prev && !prev.ok ? "err" : prev ? "ok" : "out-pending"}${outRichClass}" draggable="false" data-out="${c.index}" title="Click to copy">${outRendered ? outRendered.html : ""}</div>
         </div>
       </div>
       <div class="cell-resize-handle" draggable="false" title="Drag corner to resize"></div>
     `;
     cellsCanvas.appendChild(div);
+    syncOutLabelRowForCell(c.index);
     const runInp = div.querySelector<HTMLInputElement>(`[data-run-input="${c.index}"]`);
     if (runInp) {
       runInp.value = cellRunInputDraft.get(c.index) ?? "";
@@ -1938,12 +1996,150 @@ function renderCells(cells: Cell[], path: string | null) {
   }
 }
 
-function formatOut(o: { stdout: string; stderr: string; ok: boolean }) {
+function formatOut(o: CellOutput) {
   let s = "";
   if (o.stdout) s += o.stdout;
   if (o.stderr) s += (s ? "\n" : "") + o.stderr;
   if (!s) s = o.ok ? "(finished — no stdout/stderr)" : "(failed)";
   return s;
+}
+
+/** HTML fragment: optional prolog, then a tag name, closing slash-tag, or !DOCTYPE. */
+function looksLikeHtmlFragment(stdout: string): boolean {
+  const t = stdout.trimStart();
+  return /^<\s*([a-zA-Z][\w:-]*|\/\s*[a-zA-Z]|!DOCTYPE\b)/.test(t);
+}
+
+/** Cheap Markdown signals beyond “plain prose” (see EXPERIMENT / demo prints). */
+function looksLikeMarkdown(s: string): boolean {
+  if (/\*\*[\s\S]*?\*\*/.test(s)) return true;
+  if (/__[\s\S]*?__/.test(s)) return true;
+  if (/`[^`]+`/.test(s)) return true;
+  if (/\]\([^)]+\)/.test(s)) return true;
+  if (/^#{1,6}\s/m.test(s)) return true;
+  if (/^\s*[-*+]\s/m.test(s)) return true;
+  if (/^\s*\d+\.\s/m.test(s)) return true;
+  if (/\|[^\n]+\|/.test(s)) return true;
+  return false;
+}
+
+function detectStdoutKind(stdout: string): StdoutKind {
+  if (!stdout.trim()) return "text";
+  if (looksLikeHtmlFragment(stdout)) return "html";
+  if (looksLikeMarkdown(stdout)) return "markdown";
+  return "text";
+}
+
+/** Preset rich kind for stdout (hint overrides heuristics); ``null`` → plain-only, no toggle chip. */
+function presetRichKind(o: CellOutput): "html" | "markdown" | null {
+  const k: StdoutKind = o.renderHint ?? detectStdoutKind(o.stdout);
+  if (k === "html") return "html";
+  if (k === "markdown") return "markdown";
+  return null;
+}
+
+function showOutputRichToggleForCell(o: CellOutput | undefined): boolean {
+  if (!o || !hasCellBodyOutput(o)) return false;
+  return presetRichKind(o) !== null;
+}
+
+function outputPlainToggleLabel(preset: "html" | "markdown", asPlain: boolean): string {
+  if (asPlain) return "Text";
+  return preset === "html" ? "HTML" : "MD";
+}
+
+function outputPlainToggleTitle(preset: "html" | "markdown", asPlain: boolean): string {
+  const rich = preset === "html" ? "HTML" : "Markdown";
+  if (asPlain) return `Showing escaped text. Click to render ${rich}.`;
+  return `Showing ${rich}. Click to view as plain text.`;
+}
+
+/** Kernel HTML / MD is sanitized before ``innerHTML`` (XSS-safe). */
+function renderStdoutHtml(
+  stdout: string,
+  asPlainText: boolean,
+  renderHint: StdoutKind | null | undefined,
+): { html: string; rich: boolean } {
+  if (!stdout.trim()) return { html: "", rich: false };
+  if (asPlainText) {
+    return { html: escapeHtml(stdout), rich: false };
+  }
+  const effective: StdoutKind = renderHint ?? detectStdoutKind(stdout);
+  if (effective === "text") {
+    return { html: escapeHtml(stdout), rich: false };
+  }
+  if (effective === "html") {
+    return { html: DOMPurify.sanitize(stdout), rich: true };
+  }
+  const raw = marked.parse(stdout, { async: false }) as string;
+  return { html: DOMPurify.sanitize(raw), rich: true };
+}
+
+function renderOutputInnerHtml(o: CellOutput, cellIndex: number): { html: string; richLayout: boolean } {
+  const hasBody = Boolean(o.stdout.trim() || o.stderr.trim());
+  if (!hasBody) {
+    return { html: escapeHtml(formatOut(o)), richLayout: false };
+  }
+  const asPlain = cellStdoutPlainText.has(cellIndex);
+  const { html: outHtml, rich: stdoutRich } = renderStdoutHtml(o.stdout, asPlain, o.renderHint);
+  let html = outHtml;
+  if (o.stderr.trim()) {
+    html += `<pre class="stonesoup-stderr">${escapeHtml(o.stderr)}</pre>`;
+  }
+  return { html, richLayout: stdoutRich || Boolean(o.stderr.trim()) };
+}
+
+/** Creates/updates/removes the HTML/MD ↔ plain chip in the output header. */
+function syncOutLabelRowForCell(index: number) {
+  const o = outputs.get(index);
+  const block = cellsEl.querySelector<HTMLElement>(`[data-output-block="${index}"]`);
+  if (!block) return;
+  const row = block.querySelector<HTMLElement>(".out-label-row");
+  if (!row) return;
+  const wantChip = Boolean(o && showOutputRichToggleForCell(o));
+  let chip = row.querySelector<HTMLButtonElement>(`[data-out-plain-toggle="${index}"]`);
+  if (!wantChip) {
+    chip?.remove();
+    return;
+  }
+  const preset = presetRichKind(o!);
+  if (!preset) {
+    chip?.remove();
+    return;
+  }
+  const asPlain = cellStdoutPlainText.has(index);
+  if (!chip) {
+    chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "out-mode-chip";
+    chip.draggable = false;
+    chip.dataset.outPlainToggle = String(index);
+    chip.setAttribute("aria-label", "Toggle plain text");
+    chip.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const i = Number(chip!.dataset.outPlainToggle);
+      if (!Number.isInteger(i)) return;
+      if (cellStdoutPlainText.has(i)) cellStdoutPlainText.delete(i);
+      else cellStdoutPlainText.add(i);
+      refreshCellOutputView(i);
+    });
+    row.appendChild(chip);
+  }
+  chip.textContent = outputPlainToggleLabel(preset, asPlain);
+  chip.title = outputPlainToggleTitle(preset, asPlain);
+}
+
+function refreshCellOutputView(index: number) {
+  syncOutLabelRowForCell(index);
+  const o = outputs.get(index);
+  const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
+  if (!outEl || !o) return;
+  const visible = hasCellBodyOutput(o);
+  if (!visible) return;
+  if (outEl.classList.contains("out-streaming")) return;
+  const r = renderOutputInnerHtml(o, index);
+  outEl.className = "out " + (o.ok ? "ok" : "err") + (r.richLayout ? " out-rich" : "");
+  outEl.innerHTML = r.html;
 }
 
 /** True when there is real stdout/stderr to show (placeholders like “no stdout” are not shown in the UI). */
@@ -2046,6 +2242,7 @@ async function postWatch() {
       );
     } else {
       outputs.clear();
+      cellStdoutPlainText.clear();
       expanded.clear();
       staleCells.clear();
       revision = j.revision ?? revision;
@@ -2076,18 +2273,28 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || r.statusText);
-    const nextOut = {
-      stdout: j.stdout || "",
+    const peeled = peelStonesoupRenderHint(typeof j.stdout === "string" ? j.stdout : "");
+    const nextOut: CellOutput = {
+      stdout: peeled.body,
       stderr: j.stderr || "",
       ok: j.ok,
     };
+    if (peeled.renderHint != null) nextOut.renderHint = peeled.renderHint;
+    if (presetRichKind(nextOut) === null) cellStdoutPlainText.delete(index);
     outputs.set(index, nextOut);
-    const outEl = cellsEl.querySelector(`[data-out="${index}"]`);
+    const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
     const visible = hasCellBodyOutput(nextOut);
     setCellOutputBlockVisible(index, visible);
     if (outEl) {
-      outEl.className = visible ? "out " + (j.ok ? "ok" : "err") : "out out-pending";
-      outEl.textContent = visible ? formatOut(nextOut) : "";
+      outEl.classList.remove("out-streaming");
+      const baseClass = visible ? "out " + (j.ok ? "ok" : "err") : "out out-pending";
+      if (visible) {
+        refreshCellOutputView(index);
+      } else {
+        outEl.className = baseClass;
+        outEl.textContent = "";
+        syncOutLabelRowForCell(index);
+      }
     }
     syncCellCompactClassForIndex(index);
     applyFloatingLayout();
@@ -2099,11 +2306,14 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
   } catch (e) {
     const nextOut = { stdout: "", stderr: String(e), ok: false };
     outputs.set(index, nextOut);
-    const outEl = cellsEl.querySelector(`[data-out="${index}"]`);
+    const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
     setCellOutputBlockVisible(index, true);
     if (outEl) {
+      outEl.classList.remove("out-streaming");
       outEl.className = "out err";
+      outEl.classList.remove("out-rich");
       outEl.textContent = String(e);
+      syncOutLabelRowForCell(index);
     }
     syncCellCompactClassForIndex(index);
     applyFloatingLayout();
@@ -2119,6 +2329,7 @@ async function resetKernel() {
     const r = await fetch(`${apiBase}/api/reset`, { method: "POST" });
     if (!r.ok) throw new Error(await r.text());
     outputs.clear();
+    cellStdoutPlainText.clear();
     cellsEl.querySelectorAll<HTMLElement>("[data-output-block]").forEach((el) => {
       el.style.display = "none";
     });
@@ -2255,6 +2466,10 @@ async function runPipeline(pIdx: number) {
     if (btn) btn.disabled = false;
   }
 }
+
+btnCellsAutoLayout.addEventListener("click", () => {
+  resetCellsToAutoLayout();
+});
 
 btnWatch.addEventListener("click", () => postWatch());
 btnReset.addEventListener("click", () => resetKernel());

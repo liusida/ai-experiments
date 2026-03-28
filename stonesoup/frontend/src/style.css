@@ -16,7 +16,14 @@
   --vs-list-hover: #2a2d2e;
   --vs-error-border: #6b2b2b;
   --vs-error-fg: #f48771;
+  /* Git-style additions in source highlight; cell output “ok” uses --vs-out-ok-fg (grey). */
   --vs-ok-fg: #89d185;
+  /* Successful cell output: neutral, not green “ready”. */
+  --vs-out-ok-fg: #cccccc;
+  /* Cell running + streaming stdout */
+  --vs-running-fg: #e5c07b;
+  --vs-running-border: #b58900;
+  --vs-running-glow: rgba(212, 160, 23, 0.25);
   --vs-grid-line: rgba(255, 255, 255, 0.055);
   --vs-grid-line-major: rgba(255, 255, 255, 0.09);
   --vs-grid-step: 20px;
@@ -607,7 +614,7 @@ button.btn-icon svg {
 }
 
 .pipeline-chip.pipeline-chip-stale {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--vs-ok-fg) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--vs-fg-dim) 45%, transparent);
 }
 
 .pipeline-chip .chip-title {
@@ -702,6 +709,58 @@ button.btn-icon svg {
   flex: 1 1 0;
   min-height: 0;
   gap: 0;
+}
+
+/* Auto-layout: sits in .kernel-vars-dock-bar next to { } kernel vars chip (bottom-left stack). */
+.kernel-vars-dock-bar {
+  --kernel-dock-bar-height: 32px;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 8px;
+  align-self: flex-start;
+  pointer-events: auto;
+}
+
+.kernel-vars-dock-bar .cells-auto-fab {
+  width: var(--kernel-dock-bar-height);
+  height: var(--kernel-dock-bar-height);
+  min-height: var(--kernel-dock-bar-height);
+  box-sizing: border-box;
+}
+
+.kernel-vars-dock-bar .kernel-vars-chip {
+  align-self: stretch;
+  height: var(--kernel-dock-bar-height);
+  min-height: var(--kernel-dock-bar-height);
+  max-height: var(--kernel-dock-bar-height);
+  box-sizing: border-box;
+  padding: 0 10px;
+}
+
+.cells-auto-fab {
+  flex-shrink: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 80%, var(--vs-accent));
+  background: var(--vs-bg-side);
+  color: var(--vs-fg-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow:
+    0 2px 12px color-mix(in srgb, #000 22%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--vs-border) 45%, transparent);
+}
+
+.cells-auto-fab:hover {
+  background: var(--vs-btn-hover);
+  color: var(--vs-fg);
+  border-color: var(--vs-accent);
 }
 
 .cells {
@@ -858,17 +917,17 @@ button.btn-icon svg {
 
 .cell.cell-running {
   z-index: 5;
-  outline: 2px solid var(--vs-accent);
+  outline: 2px solid var(--vs-running-border);
   outline-offset: 1px;
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--vs-accent) 50%, transparent),
-    0 6px 28px rgba(55, 148, 255, 0.22);
+    0 0 0 1px color-mix(in srgb, var(--vs-running-border) 50%, transparent),
+    0 6px 28px var(--vs-running-glow);
 }
 
 .cell.cell-stale {
-  border-color: color-mix(in srgb, var(--vs-ok-fg) 55%, var(--cell-accent));
+  border-color: color-mix(in srgb, var(--vs-fg-dim) 55%, var(--cell-accent));
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--vs-ok-fg) 35%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--vs-fg-dim) 35%, transparent),
     0 2px 12px rgba(0, 0, 0, 0.45);
 }
 
@@ -881,8 +940,8 @@ button.btn-icon svg {
   padding: 2px 6px;
   border-radius: 2px;
   color: var(--vs-bg-editor);
-  background: color-mix(in srgb, var(--vs-ok-fg) 88%, #000);
-  border: 1px solid color-mix(in srgb, var(--vs-ok-fg) 70%, transparent);
+  background: color-mix(in srgb, var(--vs-fg-dim) 82%, #000);
+  border: 1px solid color-mix(in srgb, var(--vs-fg-dim) 58%, transparent);
 }
 
 .cell-updated-badge[hidden] {
@@ -1128,8 +1187,41 @@ button.btn-icon svg {
   min-height: 0;
 }
 
-.cell-output-block .out-label {
+.cell-output-block .out-label-row {
   margin-top: 0;
+}
+
+.out-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.out-label-row .out-label {
+  margin-top: 0;
+}
+
+.out-mode-chip {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.35;
+  color: var(--vs-fg-dim);
+  background: var(--vs-bg-side);
+  border: 1px solid var(--vs-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.out-mode-chip:hover {
+  color: var(--vs-fg);
+  border-color: var(--vs-accent);
+  background: var(--vs-btn-hover);
 }
 
 .cell-body pre.source.full {
@@ -1270,8 +1362,9 @@ button.btn-icon svg {
 }
 
 .out.out-streaming {
-  border-color: color-mix(in srgb, var(--vs-accent) 45%, var(--vs-border));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vs-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--vs-running-border) 55%, var(--vs-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vs-running-fg) 14%, transparent);
+  color: var(--vs-running-fg);
 }
 
 .out.out-copied {
@@ -1291,7 +1384,31 @@ button.btn-icon svg {
 }
 
 .out.ok {
-  color: var(--vs-ok-fg);
+  color: var(--vs-out-ok-fg);
+}
+
+/* HTML / Markdown output: block elements need normal flow (plain text keeps pre-wrap on .out). */
+.out.out-rich {
+  white-space: normal;
+}
+
+.out.out-rich pre,
+.out.out-rich code {
+  white-space: pre-wrap;
+}
+
+.stonesoup-stderr {
+  display: block;
+  margin-top: 0.6em;
+  padding: 6px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--vs-bg-editor) 88%, var(--vs-error-fg));
+  border: 1px solid var(--vs-error-border);
+  color: var(--vs-error-fg);
 }
 
 .toggle {
@@ -1308,7 +1425,7 @@ button.btn-icon svg {
 }
 
 .ws-dot.on {
-  background: var(--vs-ok-fg);
+  background: var(--vs-fg-dim);
 }
 
 /* --- kernel variables: float over cells (bottom-left), no layout strip --- */
