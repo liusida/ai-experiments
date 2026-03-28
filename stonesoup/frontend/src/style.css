@@ -820,6 +820,7 @@ button.btn-icon svg {
   border-radius: 4px;
   background: var(--vs-bg-side);
   overflow: hidden;
+  overscroll-behavior: contain;
   min-height: 10rem;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
   z-index: 2;

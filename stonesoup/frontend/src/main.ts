@@ -2912,6 +2912,48 @@ function bindPipelineDnD() {
   });
 }
 
+const WHEEL_SCROLL_EPS = 1;
+
+function overflowAllowsScrollY(el: HTMLElement): boolean {
+  const y = getComputedStyle(el).overflowY;
+  return y === "auto" || y === "scroll" || y === "overlay";
+}
+
+function overflowAllowsScrollX(el: HTMLElement): boolean {
+  const x = getComputedStyle(el).overflowX;
+  return x === "auto" || x === "scroll" || x === "overlay";
+}
+
+function elementCanScrollY(el: HTMLElement, dy: number): boolean {
+  if (!overflowAllowsScrollY(el)) return false;
+  if (el.scrollHeight <= el.clientHeight + WHEEL_SCROLL_EPS) return false;
+  if (dy > 0) return el.scrollTop + WHEEL_SCROLL_EPS < el.scrollHeight - el.clientHeight;
+  if (dy < 0) return el.scrollTop > WHEEL_SCROLL_EPS;
+  return false;
+}
+
+function elementCanScrollX(el: HTMLElement, dx: number): boolean {
+  if (!overflowAllowsScrollX(el)) return false;
+  if (el.scrollWidth <= el.clientWidth + WHEEL_SCROLL_EPS) return false;
+  if (dx > 0) return el.scrollLeft + WHEEL_SCROLL_EPS < el.scrollWidth - el.clientWidth;
+  if (dx < 0) return el.scrollLeft > WHEEL_SCROLL_EPS;
+  return false;
+}
+
+/** True if default wheel behavior would scroll something inside ``cell`` (not the main ``.cells`` viewport). */
+function cellInnerAbsorbsWheel(origin: Element, cell: Element, dy: number, dx: number): boolean {
+  let n: Element | null = origin;
+  while (n && cell.contains(n)) {
+    if (n instanceof HTMLElement) {
+      if (dy !== 0 && elementCanScrollY(n, dy)) return true;
+      if (dx !== 0 && elementCanScrollX(n, dx)) return true;
+    }
+    if (n === cell) break;
+    n = n.parentElement;
+  }
+  return false;
+}
+
 function bindCellsViewportPan() {
   cellsEl.addEventListener("pointerdown", (e: PointerEvent) => {
     if (e.button !== 0 || cellsPanState) return;
@@ -2952,15 +2994,21 @@ function bindCellsViewportPan() {
   cellsEl.addEventListener("pointercancel", endCellsPan);
 
   /**
-   * Background only: wheel zooms and does not scroll `.cells`. Over a `.cell`, wheel is untouched so
-   * code/output areas keep normal scrolling.
+   * Background: wheel zooms (no `.cells` scroll). Over a `.cell`: scroll only inner ``pre`` / ``.out`` when
+   * they overflow; otherwise prevent default so the main panel does not pan.
    */
   cellsEl.addEventListener(
     "wheel",
     (e: WheelEvent) => {
       const raw = e.target;
       const origin = raw instanceof Element ? raw : (raw as Node).parentElement;
-      if (!origin || !cellsEl.contains(origin) || origin.closest(".cell")) return;
+      if (!origin || !cellsEl.contains(origin)) return;
+      const cell = origin.closest(".cell");
+      if (cell && cellsEl.contains(cell)) {
+        if (cellInnerAbsorbsWheel(origin, cell, e.deltaY, e.deltaX)) return;
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       const oldS = cellsViewScale;
       const step = Math.exp(-e.deltaY * 0.002);
