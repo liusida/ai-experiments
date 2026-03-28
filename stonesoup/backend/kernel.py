@@ -74,6 +74,7 @@ class Cell:
     title: str
     source: str
     marker_key: str
+    start_line: int
     cell_input: bool = False
 
     def to_dict(self) -> dict:
@@ -82,6 +83,9 @@ class Cell:
             "title": self.title,
             "source": self.source,
             "marker_key": self.marker_key,
+            "start_line": self.start_line,
+            # Alias for JSON consumers / tooling that expect camelCase
+            "startLine": self.start_line,
             "cell_input": self.cell_input,
         }
 
@@ -103,13 +107,17 @@ def parse_cells(text: str) -> list[Cell]:
         m = CELL_START.match(lines[i])
         if m:
             marker_line = lines[i]
+            marker_line_1 = i + 1
             raw_rest = m.group(1).strip()
             wants_input = bool(CELL_INPUT_SUFFIX.search(raw_rest))
             t = CELL_INPUT_SUFFIX.sub("", raw_rest).strip() if wants_input else raw_rest.strip()
             title = t if t else title
             i += 1
+            # Deeplink: first line of cell *body* (after ``# %%``); if none, stay on marker line.
+            start_line_1 = (i + 1) if i < n else marker_line_1
         else:
             wants_input = False
+            start_line_1 = i + 1
         chunk: list[str] = []
         while i < n and not CELL_START.match(lines[i]):
             chunk.append(lines[i])
@@ -122,6 +130,7 @@ def parse_cells(text: str) -> list[Cell]:
                 title=title,
                 source=source,
                 marker_key=mk,
+                start_line=start_line_1,
                 cell_input=wants_input,
             )
         )

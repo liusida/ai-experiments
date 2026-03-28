@@ -34,7 +34,7 @@
   --pipeline-flow-row: rgba(255, 255, 255, 0.028);
   --pipeline-flow-row-line: rgba(255, 255, 255, 0.045);
 
-  /* VS Code Default Dark+–style syntax (cell source, highlight.js tokens) */
+  /* Syntax palette (e.g. rich output); not used for inline cell source in UI */
   --vs-syntax-default: #d4d4d4;
   --vs-syntax-comment: #6a9955;
   --vs-syntax-keyword: #569cd6;
@@ -364,9 +364,23 @@ button.btn-icon svg {
 .pipeline-add-strip {
   display: flex;
   justify-content: flex-start;
+  align-items: center;
+  margin-top: 1px;
 }
 
-/* Horizontal scroll only on this shell so inner flow can use overflow: visible (avoids y-clipping drop highlights). */
+.pipeline-add-strip .pipeline-add-more {
+  min-width: 1.25rem;
+  padding: 1px 5px;
+  font-size: 12px;
+  border-radius: 2px;
+}
+
+/*
+ * Horizontal scroll for the chip row. Drop highlights use inset shadows (`.pipeline-drop-zone.is-drag-over`),
+ * so we do not need overflow-y: visible here. Visible + overflow-x auto computes to overflow-y auto anyway,
+ * which can thrash: classic scrollbars change width/height when they appear, toggling overflow on the other
+ * axis. `scrollbar-gutter: stable` reserves gutter space.
+ */
 .pipeline-chips-flow-scroll {
   grid-column: 1;
   grid-row: 1;
@@ -375,7 +389,8 @@ button.btn-icon svg {
   max-width: 100%;
   align-self: stretch;
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 4px 0 6px;
   box-sizing: border-box;
 }
@@ -578,15 +593,16 @@ button.btn-icon svg {
 }
 
 .pipeline-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
+  gap: 3px;
+  padding: 3px 5px;
   border-radius: 2px;
   background: var(--vs-bg-input);
   border: 1px solid var(--vs-accent);
   font-size: 11px;
-  max-width: 200px;
+  max-width: 11rem;
   flex-shrink: 0;
   align-self: center;
 }
@@ -603,14 +619,59 @@ button.btn-icon svg {
     color-mix(in srgb, var(--cell-accent) 32%, var(--vs-bg-input)) 0%,
     var(--vs-bg-input) 55%
   );
+  cursor: grab;
+  -webkit-user-drag: element;
+  user-select: none;
+}
+
+.pipeline-chip.pipeline-chip-cell:active {
+  cursor: grabbing;
+}
+
+.pipeline-chip.pipeline-chip-cell:hover,
+.pipeline-chip.pipeline-chip-cell:focus-within {
+  z-index: 2;
 }
 
 .pipeline-chip.pipeline-chip-cell .chip-idx {
   color: var(--cell-accent);
 }
 
-.pipeline-chip.pipeline-chip-cell .pipeline-chip-drag:hover {
-  color: color-mix(in srgb, var(--cell-accent) 82%, white);
+/* Remove: out of flex row (saves width); on hover, overlay right edge on title — stays clickable inside chip. */
+.pipeline-chip.pipeline-chip-cell button[data-p-remove] {
+  position: absolute;
+  right: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 1.35;
+  min-width: 1.1rem;
+  border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 85%, transparent);
+  background: color-mix(in srgb, var(--vs-bg-input) 88%, var(--cell-accent) 12%);
+  color: var(--vs-fg-muted);
+  box-shadow: -6px 0 8px color-mix(in srgb, var(--vs-bg-input) 75%, var(--cell-accent) 25%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.1s ease,
+    visibility 0.1s ease;
+  z-index: 3;
+}
+
+.pipeline-chip.pipeline-chip-cell:hover button[data-p-remove],
+.pipeline-chip.pipeline-chip-cell:focus-within button[data-p-remove] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.pipeline-chip.pipeline-chip-cell:hover button[data-p-remove]:hover {
+  color: var(--vs-fg);
+  border-color: var(--vs-accent);
 }
 
 .pipeline-chip.pipeline-chip-stale {
@@ -621,32 +682,14 @@ button.btn-icon svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 6ch;
+  min-width: 0;
 }
 
 .pipeline-chip .chip-idx {
   color: var(--vs-link);
   font-weight: 700;
   flex-shrink: 0;
-}
-
-.pipeline-chip button {
-  padding: 1px 6px;
-  font-size: 10px;
-  min-width: 0;
-}
-
-.pipeline-chip-drag {
-  flex-shrink: 0;
-  cursor: grab;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--vs-fg-muted);
-  padding: 0 2px;
-  user-select: none;
-}
-
-.pipeline-chip-drag:hover {
-  color: var(--vs-link);
 }
 
 .pipeline-loop-drag {
@@ -696,6 +739,16 @@ button.btn-icon svg {
   outline-offset: 0;
 }
 
+.cell.cell-pipeline-chip-hover {
+  z-index: 12;
+  outline: 2px solid var(--vs-link);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vs-link) 40%, transparent),
+    0 6px 28px color-mix(in srgb, var(--vs-link) 22%, transparent),
+    0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
 .btn-chain {
   font-size: 11px;
   padding: 2px 8px;
@@ -730,12 +783,10 @@ button.btn-icon svg {
 }
 
 .kernel-vars-dock-bar .kernel-vars-chip {
-  align-self: stretch;
-  height: var(--kernel-dock-bar-height);
+  align-self: center;
   min-height: var(--kernel-dock-bar-height);
-  max-height: var(--kernel-dock-bar-height);
   box-sizing: border-box;
-  padding: 0 10px;
+  padding: 2px 10px;
 }
 
 .cells-auto-fab {
@@ -846,20 +897,6 @@ button.btn-icon svg {
   flex-direction: column;
 }
 
-/* User-sized cell: code fills by default; cap height when output strip is also open */
-.cell.cell-custom-geometry .cell-code-panel {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-}
-
-.cell.cell-custom-geometry
-  .cell-body:has(.cell-output-block[style*="display: flex"])
-  .cell-code-panel[style*="display: block"] {
-  flex: 0 1 auto;
-  max-height: 48%;
-}
-
 .cell.cell-custom-geometry .cell-output-block {
   flex: 1 1 0;
   min-height: 0;
@@ -873,10 +910,6 @@ button.btn-icon svg {
   min-height: 0;
   max-height: none;
   overflow-y: auto;
-}
-
-.cell.cell-custom-geometry .cell-body pre.source.full {
-  max-height: none;
 }
 
 .cell-resize-handle {
@@ -1119,6 +1152,10 @@ button.btn-icon svg {
   cursor: pointer;
 }
 
+.cell-head a.cell-cursor-link {
+  cursor: pointer;
+}
+
 .cell-run-input {
   flex: 1 1 160px;
   min-width: 100px;
@@ -1155,17 +1192,9 @@ button.btn-icon svg {
   min-height: 0;
 }
 
-.cell-body > .cell-code-panel,
 .cell-body > .cell-output-block {
   padding-left: 10px;
   padding-right: 10px;
-}
-
-.cell-body > .cell-code-panel {
-  padding-bottom: 10px;
-}
-
-.cell-body > .cell-output-block {
   padding-bottom: 10px;
 }
 
@@ -1176,10 +1205,6 @@ button.btn-icon svg {
   color: var(--vs-fg-dim);
   font-size: 10px;
   line-height: 1.45;
-}
-
-.cell-code-panel {
-  min-height: 0;
 }
 
 .cell-output-block {
@@ -1223,122 +1248,6 @@ button.btn-icon svg {
   color: var(--vs-fg);
   border-color: var(--vs-accent);
   background: var(--vs-btn-hover);
-}
-
-.cell-body pre.source.full {
-  max-height: min(28vh, 11rem);
-  overflow-y: auto;
-  padding: 5px 6px;
-  background: var(--vs-bg-editor);
-  border-radius: 2px;
-  border: 1px solid var(--vs-border);
-  color: var(--vs-syntax-default);
-}
-
-.cell-body pre.source.full code.hljs {
-  display: block;
-  padding: 0;
-  background: transparent;
-  font-size: inherit;
-  line-height: inherit;
-  overflow-x: auto;
-  color: var(--vs-syntax-default);
-}
-
-/* highlight.js tokens — VS Code Default Dark+ palette */
-.cell-body pre.source.full .hljs-keyword,
-.cell-body pre.source.full .hljs-literal {
-  color: var(--vs-syntax-keyword);
-}
-
-.cell-body pre.source.full .hljs-string,
-.cell-body pre.source.full .hljs-regexp {
-  color: var(--vs-syntax-string);
-}
-
-.cell-body pre.source.full .hljs-comment,
-.cell-body pre.source.full .hljs-quote {
-  color: var(--vs-syntax-comment);
-  font-style: italic;
-}
-
-.cell-body pre.source.full .hljs-number {
-  color: var(--vs-syntax-number);
-}
-
-.cell-body pre.source.full .hljs-built_in {
-  color: var(--vs-syntax-builtin);
-}
-
-.cell-body pre.source.full .hljs-type {
-  color: var(--vs-syntax-type);
-}
-
-.cell-body pre.source.full .hljs-title.function_ {
-  color: var(--vs-syntax-function);
-}
-
-.cell-body pre.source.full .hljs-title.class_ {
-  color: var(--vs-syntax-class);
-}
-
-.cell-body pre.source.full .hljs-title.class_.inherited__ {
-  color: var(--vs-syntax-class);
-  opacity: 0.92;
-}
-
-.cell-body pre.source.full .hljs-params {
-  color: var(--vs-syntax-parameter);
-}
-
-.cell-body pre.source.full .hljs-variable.language_ {
-  color: var(--vs-syntax-self);
-}
-
-.cell-body pre.source.full .hljs-meta {
-  color: var(--vs-syntax-decorator);
-}
-
-.cell-body pre.source.full .hljs-subst {
-  color: var(--vs-syntax-default);
-}
-
-.cell-body pre.source.full .hljs-section,
-.cell-body pre.source.full .hljs-doctag,
-.cell-body pre.source.full .hljs-formula {
-  color: var(--vs-syntax-keyword);
-}
-
-.cell-body pre.source.full .hljs-name,
-.cell-body pre.source.full .hljs-attr {
-  color: var(--vs-syntax-parameter);
-}
-
-.cell-body pre.source.full .hljs-bullet,
-.cell-body pre.source.full .hljs-link,
-.cell-body pre.source.full .hljs-symbol {
-  color: var(--vs-syntax-keyword);
-}
-
-.cell-body pre.source.full .hljs-emphasis {
-  font-style: italic;
-}
-
-.cell-body pre.source.full .hljs-strong {
-  font-weight: 600;
-}
-
-.cell-body pre.source.full .hljs-addition {
-  color: var(--vs-ok-fg);
-}
-
-.cell-body pre.source.full .hljs-deletion {
-  color: var(--vs-error-fg);
-}
-
-.cell-body pre.source.full .hljs-char.escape_,
-.cell-body pre.source.full .hljs-escape {
-  color: var(--vs-syntax-escape);
 }
 
 .out-label {
@@ -1415,6 +1324,30 @@ button.btn-icon svg {
 .toggle {
   font-size: 11px;
   padding: 2px 6px;
+}
+
+a.toggle.cell-cursor-link {
+  text-decoration: none;
+  color: var(--vs-fg);
+  border: 1px solid var(--vs-border);
+  border-radius: 3px;
+  background: var(--vs-btn);
+  display: inline-block;
+  line-height: 1.2;
+}
+
+a.toggle.cell-cursor-link:hover {
+  background: var(--vs-btn-hover);
+  border-color: var(--vs-accent);
+}
+
+.cell-cursor-link--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  border: 1px solid var(--vs-border);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 11px;
 }
 
 .ws-dot {
@@ -1582,12 +1515,44 @@ button.btn-icon svg {
 .kernel-vars-chip-icon {
   opacity: 0.85;
   letter-spacing: -0.05em;
+  flex-shrink: 0;
 }
 
-.kernel-vars-chip-count {
-  min-width: 1.25em;
-  text-align: center;
-  font-size: 11px;
-  font-weight: 600;
+.kernel-vars-chip-sessions {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  max-width: min(420px, 72vw);
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: left;
+  scrollbar-width: thin;
+}
+
+.kernel-vars-chip-sep {
+  flex-shrink: 0;
+  opacity: 0.4;
+  font-size: 10px;
   color: var(--vs-fg-dim);
+  user-select: none;
+}
+
+.kernel-vars-chip-session {
+  flex: 0 0 auto;
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--vs-fg-dim);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.kernel-vars-chip-session--current {
+  font-weight: 700;
+  color: var(--vs-fg);
+  border-bottom: 2px solid var(--vs-accent);
+  padding-bottom: 1px;
+  margin-bottom: -1px;
 }

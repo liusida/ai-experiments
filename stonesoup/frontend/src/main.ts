@@ -1,20 +1,69 @@
 import "./style.css";
 import DOMPurify from "dompurify";
-import hljs from "highlight.js/lib/core";
-import python from "highlight.js/lib/languages/python";
 import { marked } from "marked";
-
-hljs.registerLanguage("python", python);
 
 type Cell = {
   index: number;
   title: string;
   source: string;
   marker_key: string;
+  start_line?: number;
   cell_input?: boolean;
 };
 
-/** Manual resize / saved layout: must leave room below `.cell-head` for output/code */
+/** Read 1-based cell body start line from API/WS JSON (snake_case or camelCase). */
+function readCellStartLineFromPayload(raw: Record<string, unknown>): number | undefined {
+  const v = raw.start_line ?? raw.startLine;
+  if (v === undefined || v === null) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 1) return undefined;
+  return Math.floor(n);
+}
+
+/** Normalize parsed cell objects so ``start_line`` is always set when the server sent it. */
+function cellFromApiPayload(raw: unknown): Cell {
+  if (!raw || typeof raw !== "object") {
+    return { index: 0, title: "", source: "", marker_key: "" };
+  }
+  const o = raw as Record<string, unknown>;
+  const sl = readCellStartLineFromPayload(o);
+  const c: Cell = {
+    index: Number(o.index) || 0,
+    title: String(o.title ?? ""),
+    source: String(o.source ?? ""),
+    marker_key: String(o.marker_key ?? ""),
+    cell_input: Boolean(o.cell_input),
+  };
+  if (sl !== undefined) c.start_line = sl;
+  return c;
+}
+
+/** Deeplink to open the file in Cursor at 1-based line:column (OS must handle `cursor://`). */
+function cursorFileUrl(absolutePath: string, line: number, col: number = 1): string {
+  let p = absolutePath.trim().replace(/^file:\/\//i, "");
+  p = p.replace(/\\/g, "/");
+  if (/^[A-Za-z]:\//.test(p)) {
+    return `cursor://file/${p}:${line}:${col}`;
+  }
+  if (!p.startsWith("/")) {
+    p = `/${p}`;
+  }
+  return `cursor://file${p}:${line}:${col}`;
+}
+
+function cellCursorHref(pathForLink: string | null | undefined, startLine: number): string {
+  const t = pathForLink?.trim() ?? "";
+  if (!t) return "";
+  const line =
+    Number.isFinite(startLine) && startLine >= 1 ? Math.floor(Number(startLine)) : 1;
+  return cursorFileUrl(t, line);
+}
+
+function escapeHtmlAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/** Manual resize / saved layout: must leave room below `.cell-head` for output */
 const CELL_LAYOUT_MIN_W = 220;
 const CELL_LAYOUT_MIN_H = 200;
 
@@ -145,7 +194,7 @@ app.innerHTML = `
     </span>
     <input type="hidden" id="path-input" />
     <button type="button" class="primary" id="btn-watch">Watch</button>
-    <button type="button" id="btn-reset">Reset kernel</button>
+    <button type="button" id="btn-reset" title="Restart the Stonesoup backend (fresh process; reclaims memory)">Reset</button>
   </div>
   <div class="pipeline-row" id="pipeline-row">
     <div class="pipeline-aside">
@@ -175,9 +224,9 @@ app.innerHTML = `
       </div>
       <div class="kernel-vars-dock-bar">
         <button type="button" class="cells-auto-fab" id="btn-cells-auto-layout" title="Discard saved positions and reflow cells into the automatic grid (fixes overlap after output or resize)" aria-label="Automatic cell layout">↻</button>
-        <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show kernel variables">
+        <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show kernel variables (per script)">
           <span class="kernel-vars-chip-icon" aria-hidden="true">{ }</span>
-          <span class="kernel-vars-chip-count" id="kernel-vars-count"></span>
+          <span class="kernel-vars-chip-sessions" id="kernel-vars-sessions"></span>
         </button>
       </div>
     </div>
@@ -208,7 +257,7 @@ const kernelVarsEmpty = app.querySelector<HTMLParagraphElement>("#kernel-vars-em
 const kernelVarsToggle = app.querySelector<HTMLButtonElement>("#kernel-vars-toggle")!;
 const kernelVarsCollapse = app.querySelector<HTMLButtonElement>("#kernel-vars-collapse")!;
 const kernelVarsRefresh = app.querySelector<HTMLButtonElement>("#kernel-vars-refresh")!;
-const kernelVarsCount = app.querySelector<HTMLSpanElement>("#kernel-vars-count")!;
+const kernelVarsSessions = app.querySelector<HTMLSpanElement>("#kernel-vars-sessions")!;
 
 const KERNEL_VARS_EXPANDED_KEY = "stonesoup_kernel_vars_expanded";
 
@@ -417,7 +466,6 @@ let revision = 0;
 let lastCells: Cell[] = [];
 let lastPath: string | null = null;
 let ws: WebSocket | null = null;
-const expanded = new Set<number>();
 /** Cell indices whose source changed on disk since last successful run (merged from server + cleared on run). */
 const staleCells = new Set<number>();
 
@@ -469,13 +517,10 @@ function mergeCellRunInject(index: number, inject?: Record<string, unknown> | nu
   return base;
 }
 
-/** Drop output / expanded state for cell indices that no longer exist after a re-parse. */
-function pruneOutputsAndExpanded(cellCount: number) {
+/** Drop output state for cell indices that no longer exist after a re-parse. */
+function pruneOutputsForCellCount(cellCount: number) {
   for (const k of [...outputs.keys()]) {
     if (!Number.isInteger(k) || k < 0 || k >= cellCount) outputs.delete(k);
-  }
-  for (const k of [...expanded]) {
-    if (!Number.isInteger(k) || k < 0 || k >= cellCount) expanded.delete(k);
   }
   for (const k of [...cellStdoutPlainText.keys()]) {
     if (!Number.isInteger(k) || k < 0 || k >= cellCount) cellStdoutPlainText.delete(k);
@@ -777,7 +822,7 @@ function applyCellsFromServer(
   data: {
     revision: number;
     path: string | null;
-    cells: Cell[];
+    cells: readonly unknown[] | Cell[];
     changed_cell_indices?: unknown;
   },
   opts?: { forceResetOutputs?: boolean },
@@ -787,13 +832,12 @@ function applyCellsFromServer(
   if (pathChanged || opts?.forceResetOutputs) {
     outputs.clear();
     cellStdoutPlainText.clear();
-    expanded.clear();
     staleCells.clear();
   }
   revision = data.revision;
-  const cells = data.cells;
+  const cells = Array.isArray(data.cells) ? data.cells.map(cellFromApiPayload) : [];
   if (!pathChanged && !opts?.forceResetOutputs) {
-    pruneOutputsAndExpanded(cells.length);
+    pruneOutputsForCellCount(cells.length);
     pruneStaleCells(cells.length);
   }
   const changed = data.changed_cell_indices;
@@ -827,15 +871,57 @@ function scheduleKernelVarsRefresh() {
   }, 120);
 }
 
+type KernelSessionChip = { path: string; n_vars: number; current: boolean };
+
+/** Max characters of basename for non-current entries in the `{ }` chip (then `…`). */
+const KERNEL_CHIP_OTHER_BASENAME_MAX = 10;
+
+function basenameOfRepoPath(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash >= 0 ? path.slice(slash + 1) : path;
+}
+
+function truncateChipBasename(name: string, maxChars: number): string {
+  if (name.length <= maxChars) return name;
+  return `${name.slice(0, Math.max(1, maxChars - 1))}…`;
+}
+
+function renderKernelVarsChipSessions(sessions: KernelSessionChip[]) {
+  kernelVarsSessions.replaceChildren();
+  if (!sessions.length) return;
+  sessions.forEach((s, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "kernel-vars-chip-sep";
+      sep.setAttribute("aria-hidden", "true");
+      sep.textContent = "·";
+      kernelVarsSessions.appendChild(sep);
+    }
+    const line = document.createElement("span");
+    line.className =
+      "kernel-vars-chip-session" + (s.current ? " kernel-vars-chip-session--current" : "");
+    const base = basenameOfRepoPath(s.path);
+    const label = s.current ? base : truncateChipBasename(base, KERNEL_CHIP_OTHER_BASENAME_MAX);
+    line.textContent = `${label} · ${s.n_vars}`;
+    line.title = `${s.path} — ${s.n_vars} variable${s.n_vars === 1 ? "" : "s"}`;
+    kernelVarsSessions.appendChild(line);
+  });
+}
+
 async function fetchKernelVars() {
   try {
     const r = await fetch(`${apiBase}/api/kernel/vars`);
-    const j = (await r.json()) as { vars?: { name: string; type: string; preview: string }[] };
-    if (!r.ok || !Array.isArray(j.vars)) return;
-    const n = j.vars.length;
-    kernelVarsCount.textContent = n ? String(n) : "";
+    const j = (await r.json()) as {
+      vars?: { name: string; type: string; preview: string }[];
+      sessions?: KernelSessionChip[];
+    };
+    if (!r.ok) return;
+    const rows = Array.isArray(j.vars) ? j.vars : [];
+    const sessions = Array.isArray(j.sessions) ? j.sessions : [];
+    renderKernelVarsChipSessions(sessions);
+    const n = rows.length;
     kernelVarsTbody.replaceChildren();
-    for (const row of j.vars) {
+    for (const row of rows) {
       const tr = document.createElement("tr");
       const tdName = document.createElement("td");
       tdName.className = "kernel-vars-name";
@@ -1309,13 +1395,10 @@ function renderPipelineBar() {
         chip.className = "pipeline-chip pipeline-chip-cell";
         if (staleCells.has(idx)) chip.classList.add("pipeline-chip-stale");
         applyCellColorVars(chip, idx);
-        const dragGrip = document.createElement("span");
-        dragGrip.className = "pipeline-chip-drag";
-        dragGrip.draggable = true;
-        dragGrip.dataset.pipelineChipDrag = pathJson;
-        dragGrip.title = "Drag to move in pipeline";
-        dragGrip.textContent = "⠿";
-        dragGrip.setAttribute("aria-hidden", "true");
+        chip.draggable = true;
+        chip.dataset.pipelineChipDrag = pathJson;
+        chip.dataset.cellIndex = String(idx);
+        chip.title = `${title} — drag to reorder in pipeline`;
         const idxSpan = document.createElement("span");
         idxSpan.className = "chip-idx";
         idxSpan.textContent = String(idx);
@@ -1323,7 +1406,11 @@ function renderPipelineBar() {
         const titleSpan = document.createElement("span");
         titleSpan.className = "chip-title";
         titleSpan.title = title;
-        titleSpan.textContent = title;
+        const shortTitle =
+          [...title].length > 6
+            ? `${[...title].slice(0, 6).join("")}…`
+            : title;
+        titleSpan.textContent = shortTitle;
         const bRm = document.createElement("button");
         bRm.type = "button";
         bRm.dataset.pPath = pathJson;
@@ -1331,7 +1418,7 @@ function renderPipelineBar() {
         bRm.dataset.pRemove = "1";
         bRm.title = "Remove";
         bRm.textContent = "×";
-        chip.append(dragGrip, idxSpan, titleSpan, bRm);
+        chip.append(idxSpan, titleSpan, bRm);
         parent.appendChild(chip);
       } else {
         const nRuns = loopRunCount(step);
@@ -1505,7 +1592,7 @@ function renderPipelineBar() {
   addWrap.className = "pipeline-add-strip";
   const bAdd = document.createElement("button");
   bAdd.type = "button";
-  bAdd.className = "btn-icon";
+  bAdd.className = "btn-icon pipeline-add-more";
   bAdd.title = "Add another pipeline";
   bAdd.setAttribute("aria-label", "Add pipeline");
   bAdd.textContent = "＋";
@@ -1682,6 +1769,43 @@ function highlightPipelineCells() {
   });
 }
 
+const CELL_PIPELINE_CHIP_HOVER = "cell-pipeline-chip-hover";
+
+function clearPipelineChipCanvasHover() {
+  cellsCanvas.querySelectorAll<HTMLElement>(`.cell.${CELL_PIPELINE_CHIP_HOVER}`).forEach((el) => {
+    el.classList.remove(CELL_PIPELINE_CHIP_HOVER);
+  });
+}
+
+function setPipelineChipCanvasHover(idx: number) {
+  clearPipelineChipCanvasHover();
+  const cell = cellsCanvas.querySelector<HTMLElement>(`.cell[data-pipeline-cell-drag="${idx}"]`);
+  cell?.classList.add(CELL_PIPELINE_CHIP_HOVER);
+}
+
+let pipelineChipCanvasHoverBound = false;
+function bindPipelineChipCanvasHover() {
+  if (pipelineChipCanvasHoverBound) return;
+  pipelineChipCanvasHoverBound = true;
+  const stack = document.getElementById("pipelines-stack");
+  if (!stack) return;
+  stack.addEventListener("mouseover", (e) => {
+    const chip = (e.target as Element).closest<HTMLElement>(".pipeline-chip.pipeline-chip-cell");
+    if (!chip || !stack.contains(chip)) return;
+    const ci = Number(chip.dataset.cellIndex);
+    if (!Number.isInteger(ci)) return;
+    setPipelineChipCanvasHover(ci);
+  });
+  stack.addEventListener("mouseout", (e) => {
+    const chip = (e.target as Element).closest<HTMLElement>(".pipeline-chip.pipeline-chip-cell");
+    if (!chip || !stack.contains(chip)) return;
+    const rel = e.relatedTarget as Element | null;
+    if (rel && chip.contains(rel)) return;
+    if (rel && rel.closest(".pipeline-chip.pipeline-chip-cell")) return;
+    clearPipelineChipCanvasHover();
+  });
+}
+
 function appendToPipeline(idx: number) {
   const last = pipelines[pipelines.length - 1];
   if (!last) return;
@@ -1804,11 +1928,10 @@ function applyFloatingLayout() {
       cell.style.left = `${Math.max(0, saved.left)}px`;
       cell.style.top = `${Math.max(0, saved.top)}px`;
       cell.style.width = `${Math.max(CELL_LAYOUT_MIN_W, saved.width)}px`;
-      /* Compact cards save a small height; do not floor to CELL_LAYOUT_MIN_H or every header-only cell becomes a tall empty box after any full re-layout (e.g. toggling Code). */
+      /* Compact cards save a small height; do not floor to CELL_LAYOUT_MIN_H or every header-only cell becomes a tall empty box after any full re-layout. */
       const showOutForLayout =
         hasCellBodyOutput(outputs.get(idx)) || isOutputStripVisible(idx);
-      const compact =
-        Number.isInteger(idx) && !expanded.has(idx) && !showOutForLayout;
+      const compact = Number.isInteger(idx) && !showOutForLayout;
       /* Do not set inline min-height: 0 here — it overrides `.cell-custom-geometry { min-height: 200px }` and
          sticks until the next full layout, so cells collapse after pipeline runs. Let classes control min-height. */
       if (compact) {
@@ -1851,6 +1974,7 @@ function renderCells(cells: Cell[], path: string | null) {
   lastCells = cells;
   lastPath = path;
   const p = path ?? pathInput.value.trim();
+  const pathForEditorLink = (path?.trim() || pathInput.value.trim()) || "";
   const pathChangedForScrollReset = p !== lastLayoutPath;
   if (p !== lastLayoutPath || cells.length !== lastLayoutCount) {
     cellPositions.clear();
@@ -1901,8 +2025,18 @@ function renderCells(cells: Cell[], path: string | null) {
     const showOut = hasCellBodyOutput(prev);
     const outRendered = showOut && prev ? renderOutputInnerHtml(prev, c.index) : null;
     const outRichClass = outRendered?.richLayout ? " out-rich" : "";
-    const exp = expanded.has(c.index);
-    if (!exp && !showOut) div.classList.add("cell-compact");
+    if (!showOut) div.classList.add("cell-compact");
+    const slRaw = c.start_line;
+    const slNum = slRaw === undefined || slRaw === null ? NaN : Number(slRaw);
+    const startLine =
+      Number.isFinite(slNum) && slNum >= 1 ? Math.floor(slNum) : 1;
+    const cursorHref = pathForEditorLink
+      ? cellCursorHref(pathForEditorLink, startLine)
+      : "";
+    const codeControl =
+      cursorHref !== ""
+        ? `<a class="toggle cell-cursor-link" draggable="false" href="${escapeHtmlAttr(cursorHref)}" title="Open this cell in Cursor (deeplink)" rel="noopener">Code</a>`
+        : `<span class="toggle cell-cursor-link cell-cursor-link--disabled" title="Watch a file to open in Cursor">Code</span>`;
     const runInputHtml = c.cell_input
       ? `<input type="text" class="cell-run-input" draggable="false" data-run-input="${c.index}" placeholder="CELL_INPUT" spellcheck="false" title="Injected as CELL_INPUT · Ctrl+Enter or ⌘+Enter to run this cell" aria-label="Cell run input" />`
       : "";
@@ -1915,14 +2049,11 @@ function renderCells(cells: Cell[], path: string | null) {
             <span class="cell-title">${escapeHtml(c.title)}</span>
           </div>
           <div class="cell-head-actions">
-            <button type="button" class="toggle" draggable="false" data-toggle="${c.index}" title="${exp ? "Hide source" : "Show source"}">${exp ? "Hide" : "Code"}</button>
+            ${codeControl}
             <button type="button" class="btn-chain" draggable="false" data-pipeline-add="${c.index}" title="Append to pipeline">+ chain</button>
             ${runInputHtml}
             <button type="button" class="primary" draggable="false" data-run="${c.index}">Run</button>
           </div>
-        </div>
-        <div class="cell-code-panel" style="display:${exp ? "block" : "none"}">
-          <pre class="source full"><code class="language-python hljs">${safeHighlightPython(c.source)}</code></pre>
         </div>
         <div class="cell-output-block" data-output-block="${c.index}" style="display:${showOut ? "flex" : "none"}">
           <div class="out-label-row" draggable="false">
@@ -1948,6 +2079,11 @@ function renderCells(cells: Cell[], path: string | null) {
         void runCell(c.index);
       });
     }
+    div.querySelectorAll<HTMLAnchorElement>("a.cell-cursor-link[href]").forEach((a) => {
+      const stop = (e: Event) => e.stopPropagation();
+      a.addEventListener("click", stop);
+      a.addEventListener("pointerdown", stop);
+    });
   }
 
   cellsCanvas.querySelectorAll("[data-run]").forEach((btn) => {
@@ -1956,15 +2092,6 @@ function renderCells(cells: Cell[], path: string | null) {
       runCell(idx);
     });
   });
-  cellsCanvas.querySelectorAll("[data-toggle]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const idx = Number((btn as HTMLButtonElement).dataset.toggle);
-      if (expanded.has(idx)) expanded.delete(idx);
-      else expanded.add(idx);
-      renderCells(lastCells, lastPath);
-    });
-  });
-
   cellsCanvas.querySelectorAll<HTMLButtonElement>("[data-pipeline-add]").forEach((btn) => {
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -2062,7 +2189,7 @@ function renderOutputInnerHtml(o: CellOutput, cellIndex: number): { html: string
   if (o.stderr.trim()) {
     html += `<pre class="stonesoup-stderr">${escapeHtml(o.stderr)}</pre>`;
   }
-  return { html, richLayout: stdoutRich || Boolean(o.stderr.trim()) };
+  return { html, richLayout: stdoutRich };
 }
 
 /** Creates/updates/removes the HTML/MD ↔ plain chip in the output header. */
@@ -2137,14 +2264,13 @@ function isOutputStripVisible(index: number): boolean {
   return d === "flex" || d === "block";
 }
 
-/** Toolbar lives in `.cell-body`; compact = no code + no output so the card is header-only. */
+/** Toolbar lives in `.cell-body`; compact = no output so the card is header-only. */
 function syncCellCompactClassForIndex(index: number) {
   const cell = cellsCanvas.querySelector<HTMLElement>(`.cell[data-pipeline-cell-drag="${index}"]`);
   if (!cell) return;
   const showOut =
     hasCellBodyOutput(outputs.get(index)) || isOutputStripVisible(index);
-  const exp = expanded.has(index);
-  cell.classList.toggle("cell-compact", !exp && !showOut);
+  cell.classList.toggle("cell-compact", !showOut);
 }
 
 function syncCellStaleClassForIndex(index: number) {
@@ -2164,23 +2290,6 @@ function escapeHtml(s: string) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-function highlightPython(source: string): string {
-  try {
-    return hljs.highlight(source, { language: "python", ignoreIllegals: true }).value;
-  } catch {
-    return escapeHtml(source);
-  }
-}
-
-function safeHighlightPython(source: string): string {
-  try {
-    return highlightPython(source);
-  } catch (err) {
-    console.error("stonesoup: highlightPython failed", err);
-    return escapeHtml(source);
-  }
 }
 
 async function postWatch() {
@@ -2219,7 +2328,6 @@ async function postWatch() {
     } else {
       outputs.clear();
       cellStdoutPlainText.clear();
-      expanded.clear();
       staleCells.clear();
       revision = j.revision ?? revision;
     }
@@ -2299,13 +2407,18 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
   }
 }
 
-async function resetKernel() {
+async function resetServer() {
   btnReset.disabled = true;
+  const watchPath =
+    pathInput.value.trim() ||
+    readWatchPathCookie() ||
+    (lastPath?.trim() ?? "");
   try {
     const r = await fetch(`${apiBase}/api/reset`, { method: "POST" });
     if (!r.ok) throw new Error(await r.text());
     outputs.clear();
     cellStdoutPlainText.clear();
+    staleCells.clear();
     cellsEl.querySelectorAll<HTMLElement>("[data-output-block]").forEach((el) => {
       el.style.display = "none";
     });
@@ -2318,8 +2431,27 @@ async function resetKernel() {
       if (Number.isInteger(idx)) syncCellCompactClassForIndex(idx);
     });
     applyFloatingLayout();
-    setStatus(`rev ${revision} · kernel reset`);
-    scheduleKernelVarsRefresh();
+    setStatus("Restarting server…");
+    for (let i = 0; i < 60; i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      try {
+        const ping = await fetch(`${apiBase}/api/cells`);
+        if (ping.ok) {
+          connectWs();
+          if (watchPath) {
+            if (!pathInput.value.trim()) pathInput.value = watchPath;
+            await postWatch();
+          } else {
+            setStatus("Server restarted — pick a file and click Watch.");
+          }
+          scheduleKernelVarsRefresh();
+          return;
+        }
+      } catch {
+        /* still down */
+      }
+    }
+    setStatus("Server did not respond in time — refresh the page when the backend is up.");
   } catch (e) {
     setStatus(String(e));
   } finally {
@@ -2448,7 +2580,7 @@ btnCellsAutoLayout.addEventListener("click", () => {
 });
 
 btnWatch.addEventListener("click", () => postWatch());
-btnReset.addEventListener("click", () => resetKernel());
+btnReset.addEventListener("click", () => resetServer());
 
 window.addEventListener("resize", () => {
   if (lastCells.length) applyFloatingLayout();
@@ -2841,6 +2973,8 @@ function bindPipelineDnD() {
       }
       const pg = t.closest<HTMLElement>("[data-pipeline-chip-drag]");
       if (pg && pipelineRow && pipelineRow.contains(pg)) {
+        const fromBtn = t.closest("button");
+        if (fromBtn && pg.contains(fromBtn)) return;
         const shell = pg.closest<HTMLElement>(".pipeline-chips");
         const fromPipeline = Number(shell?.dataset.pipelineIndex);
         if (!Number.isInteger(fromPipeline)) return;
@@ -3040,6 +3174,7 @@ function bindCellsViewportPan() {
 bindCellGeometryInteractions();
 bindCellsViewportPan();
 bindPipelineDnD();
+bindPipelineChipCanvasHover();
 renderPipelineBar();
 initKernelVarsDock();
 connectWs();

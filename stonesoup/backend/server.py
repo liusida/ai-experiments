@@ -6,10 +6,10 @@ import asyncio
 import logging
 import os
 import queue
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Any
 
@@ -19,6 +19,27 @@ from stonesoup.backend.kernel import Cell, Kernel, parse_cells
 from stonesoup.backend.watcher import FileWatcher
 
 logger = logging.getLogger(__name__)
+
+
+def _restart_server_process() -> None:
+    """Replace this process with a new Python interpreter (same command line and environment).
+
+    Stops in-flight cell runs and returns RAM to the OS. Requires no external supervisor.
+    """
+    import sys
+
+    exe = sys.executable
+    argv = sys.argv
+    if not argv:
+        os.execv(exe, [exe])
+    try:
+        same_interpreter = os.path.samefile(argv[0], exe)
+    except OSError:
+        same_interpreter = os.path.abspath(argv[0]) == os.path.abspath(exe)
+    new_argv = [exe, *argv[1:]] if same_interpreter else [exe, *argv]
+    logger.info("Restarting Stonesoup server via exec (same argv as this process)")
+    os.execv(exe, new_argv)
+
 
 # --- path policy ---
 
@@ -62,6 +83,89 @@ def safe_dir_under_root(path_str: str) -> Path:
     return candidate
 
 
+_DEFAULT_KERNEL_CACHE_MAX = 32
+
+
+def _kernel_cache_max() -> int:
+    raw = os.environ.get("STONESOUP_KERNEL_CACHE_MAX", "").strip()
+    if not raw:
+        return _DEFAULT_KERNEL_CACHE_MAX
+    try:
+        n = int(raw)
+        return max(1, min(n, 10_000))
+    except ValueError:
+        return _DEFAULT_KERNEL_CACHE_MAX
+
+
+def _kernel_cache_key(path: Path) -> str:
+    return path.resolve().as_posix()
+
+
+def _repo_relative_display(path: Path) -> str:
+    root = stonesoup_root().resolve()
+    try:
+        return path.resolve().relative_to(root).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _get_or_create_kernel(path: Path) -> Kernel:
+    """LRU-cached ``Kernel`` for this resolved script path (MRU at OrderedDict end)."""
+    key = _kernel_cache_key(path)
+    kc = state.kernel_cache
+    if key not in kc:
+        while len(kc) >= _kernel_cache_max():
+            oldest_key, _ = kc.popitem(last=False)
+            logger.info(
+                "Evicted kernel cache for %s (cap=%d)",
+                oldest_key,
+                _kernel_cache_max(),
+            )
+        kc[key] = Kernel()
+    kc.move_to_end(key)
+    return kc[key]
+
+
+def _kernel_for_watched_path(path: Path | None) -> Kernel | None:
+    if path is None or not path.is_file():
+        return None
+    return _get_or_create_kernel(path)
+
+
+def _kernel_sessions_payload() -> tuple[str | None, list[dict[str, Any]]]:
+    watched_path_str = str(state.watched_path) if state.watched_path else None
+    current_key: str | None = None
+    if state.watched_path is not None and state.watched_path.is_file():
+        current_key = _kernel_cache_key(state.watched_path)
+
+    sessions: list[dict[str, Any]] = []
+    ordered_keys = list(state.kernel_cache.keys())
+    seen: set[str] = set()
+    if current_key and current_key in state.kernel_cache:
+        kernel = state.kernel_cache[current_key]
+        sessions.append(
+            {
+                "path": _repo_relative_display(Path(current_key)),
+                "n_vars": len(kernel.snapshot_globals_for_ui()),
+                "current": True,
+            }
+        )
+        seen.add(current_key)
+    for key in reversed(ordered_keys):
+        if key in seen:
+            continue
+        kernel = state.kernel_cache[key]
+        sessions.append(
+            {
+                "path": _repo_relative_display(Path(key)),
+                "n_vars": len(kernel.snapshot_globals_for_ui()),
+                "current": False,
+            }
+        )
+
+    return watched_path_str, sessions
+
+
 # --- app state ---
 
 
@@ -71,7 +175,7 @@ class AppState:
         self.cells: list[Cell] = []
         self.revision: int = 0
         self.last_changed_cell_indices: list[int] = []
-        self.kernel = Kernel()
+        self.kernel_cache: OrderedDict[str, Kernel] = OrderedDict()
         self.watcher = FileWatcher()
         self.ws_clients: set[WebSocket] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -292,9 +396,13 @@ async def api_run(body: RunBody) -> dict:
         if s:
             chunk_queue.put(("stderr", s))
 
+    kernel = _kernel_for_watched_path(state.watched_path)
+    if kernel is None:
+        raise HTTPException(status_code=400, detail="Watched file is not available")
+
     def worker() -> tuple[str, str, bool]:
         try:
-            return state.kernel.run_cell(
+            return kernel.run_cell(
                 source,
                 inject=inject,
                 source_path=source_path,
@@ -329,15 +437,23 @@ async def api_run(body: RunBody) -> dict:
 
 
 @app.post("/api/reset")
-async def api_reset() -> dict:
-    state.kernel.reset()
-    return {"ok": True}
+async def api_reset(background_tasks: BackgroundTasks) -> dict:
+    """Restart the backend process (fresh interpreter); UI should reconnect after a short wait."""
+    background_tasks.add_task(_restart_server_process)
+    return {"ok": True, "restarting": True}
 
 
 @app.get("/api/kernel/vars")
 async def api_kernel_vars() -> dict:
-    """Current user-visible names in the shared kernel namespace (repr previews, truncated)."""
-    return {"vars": state.kernel.snapshot_globals_for_ui()}
+    """Variable table for the current watch target; ``sessions`` lists all cached kernels (per file)."""
+    watched_path_str, sessions = _kernel_sessions_payload()
+    ker = _kernel_for_watched_path(state.watched_path)
+    vars_rows = ker.snapshot_globals_for_ui() if ker is not None else []
+    return {
+        "watched_path": watched_path_str,
+        "vars": vars_rows,
+        "sessions": sessions,
+    }
 
 
 @app.websocket("/ws")

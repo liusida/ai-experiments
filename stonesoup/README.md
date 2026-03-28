@@ -21,7 +21,7 @@ uv run python -m stonesoup.backend.server
 
 Listens on **`127.0.0.1:8765`** by default (`STONESOUP_HOST` / `STONESOUP_PORT` override). Only paths **under the repo root** are allowed unless you set **`STONESOUP_ROOT`** to a different absolute root.
 
-**Auto-reload while editing the Stonesoup server:** set **`STONESOUP_RELOAD=1`** (or `true` / `yes`) before starting the server. Uvicorn restarts only when files under the **`stonesoup/`** package change (not `experiments/` or other repo paths). Editing a **watched experiment** ``.py`` already updates the UI via the file watcher + WebSocket—**no** server restart. Each uvicorn reload resets the in-memory kernel.
+**Auto-reload while editing the Stonesoup server:** set **`STONESOUP_RELOAD=1`** (or `true` / `yes`) before starting the server. Uvicorn restarts only when files under the **`stonesoup/`** package change (not `experiments/` or other repo paths). Editing a **watched experiment** ``.py`` already updates the UI via the file watcher + WebSocket—**no** server restart. Each uvicorn reload clears all per-file kernel caches.
 
 **Repo shortcut:** from the repo root, **`./start-stonesoup`** runs **backend + frontend** together (backend in the background). You do **not** need a second terminal for the API unless you split them (`./start-stonesoup backend` in one terminal, `./start-stonesoup frontend` in another).
 
@@ -53,10 +53,13 @@ Optional: **`npm run build`** writes a static site to **`frontend/dist/`** (hand
 | POST | `/api/watch` | `{"path": "relative/or/abs/under/root.py"}` — start watcher, parse cells; response includes **`cells`**, **`revision`**, **`path`**, **`changed_cell_indices`** (same shape as WS) so the UI can refresh without waiting on the socket |
 | GET | `/api/cells` | Current cells + revision |
 | POST | `/api/run` | `{"cell_index": n, "inject": {...}?}` — optional `inject` merges into kernel globals before the cell. Cells whose marker ends with **`# stonesoup:cell-input`** get a header field; the UI sends that string as **`CELL_INPUT`**. |
-| POST | `/api/reset` | Clear kernel globals |
+| GET | `/api/kernel/vars` | `vars` (rows for the **current** watch only), `sessions` (`path`, `n_vars`, `current` per cached script kernel), `watched_path` (same idea as `/api/cells` `path`) |
+| POST | `/api/reset` | Restart the backend process (same CLI/env as startup; fresh interpreter; UI reconnects) |
 | WS | `/ws` | Push `{type:"cells", revision, cells, ...}` on file change (debounced ~0.25s). The watcher treats **modified**, **created**, and **moved** events so atomic saves (temp + rename) still trigger a reload.
 
 ## Notes
 
-- **Kernel vs file:** Saving the file updates the listed source; it does **not** re-run cells automatically.
+- **Code (cell card):** Opens the watched script in **Cursor** at the **first line of that cell’s body** (after the `# %%` marker, or the marker line if the cell has no body) via `cursor://file/…:line:col` (requires Cursor’s URL handler). Inline source preview in the web UI is not used.
+- **Kernel vs file:** Each watched `.py` gets its **own** in-memory kernel (globals are not shared across scripts). Kernels are **LRU-cached** (default **32** entries; override with **`STONESOUP_KERNEL_CACHE_MAX`**). **Reset** restarts the process and drops every cached kernel.
+- **Kernel vs edits:** Saving the file updates the listed source; it does **not** re-run cells automatically.
 - Long runs (e.g. `generate()`) may block until the request finishes; increase client timeout if needed.
