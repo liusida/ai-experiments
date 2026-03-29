@@ -7,3 +7,5 @@ stonesoup/frontend/dist/
 
 # Cached input embedding tables (large torch checkpoints)
 data/embedding-layers/*.pt
+
+/mmstar/

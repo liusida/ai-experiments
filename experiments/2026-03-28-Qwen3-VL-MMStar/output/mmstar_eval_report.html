@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>MMStar eval — Qwen/Qwen3-VL-8B-Instruct</title>
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --fg: #e8eaed;
+      --muted: #9aa0a6;
+      --line: #3c4043;
+    }
+    body {
+      font-family: system-ui, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      padding: 1rem 1.25rem 2rem;
+      line-height: 1.45;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
+    .summary { color: var(--muted); margin-bottom: 1.25rem; }
+    table { border-collapse: collapse; margin: 1rem 0 2rem; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--line); padding: 0.35rem 0.6rem; text-align: left; }
+    th { background: #252830; }
+    .grid { display: flex; flex-direction: column; gap: 1.25rem; max-width: 960px; }
+    .card {
+      background: #22252c;
+      border: 1px solid var(--line);
+      border-left-width: 4px;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+    }
+    .card img {
+      max-width: 100%;
+      max-height: 360px;
+      height: auto;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+    }
+    .meta { font-size: 0.85rem; color: var(--muted); margin: 0.5rem 0; }
+    pre.prompt {
+      white-space: pre-wrap;
+      background: #15171c;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.82rem;
+      margin: 0.5rem 0;
+    }
+    .pred {
+      font-size: 0.95rem;
+      margin-top: 0.35rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>MMStar evaluation</h1>
+  <p class="summary">
+    Model: <code>Qwen/Qwen3-VL-8B-Instruct</code><br/>
+    Dataset: <code>morpheushoc/MMStar_opencompass</code> (val)<br/>
+    Examples: 100 &nbsp;·&nbsp; Accuracy: <b>0.6300</b> (63 / 100)
+    &nbsp;·&nbsp;     Parse failures: 0<br/>
+    Wall time: 37.7s
+    
+  </p>
+  <h2 style="font-size:1rem;">Per category</h2>
+  <table>
+    <thead><tr><th>category</th><th>correct / total</th><th>acc</th></tr></thead>
+    <tbody><tr><td>coarse perception</td><td>13/18</td><td>0.7222</td></tr><tr><td>fine-grained perception</td><td>7/12</td><td>0.5833</td></tr><tr><td>instance reasoning</td><td>10/14</td><td>0.7143</td></tr><tr><td>logical reasoning</td><td>10/18</td><td>0.5556</td></tr><tr><td>math</td><td>15/24</td><td>0.6250</td></tr><tr><td>science &amp; technology</td><td>8/14</td><td>0.5714</td></tr></tbody>
+  </table>
+  <h2 style="font-size:1rem;">All examples</h2>
+  <div class="grid">
+    <section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/835.png" alt="" /></div><div class="meta">index <code>835</code> · logical reasoning · gold <b>B</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: In which direction is the sun shining in the image?
+Options:
+A. North
+B. West
+C. East
+D. South
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C. East</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1326.png" alt="" /></div><div class="meta">index <code>1326</code> · science &amp; technology · gold <b>B</b> · pred <b>D</b> (✗)</div><pre class="prompt">Question: What is the part represented by A?
+Options:
+A. none of the above
+B. liquid metallic hydrogen
+C. molecular hydrogen
+D. rocky core
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/876.png" alt="" /></div><div class="meta">index <code>876</code> · logical reasoning · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Subtract all small green shiny balls. Subtract all small metallic things. How many objects are left?
+Options:
+A. 0
+B. 1
+C. 3
+D. 5
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1348.png" alt="" /></div><div class="meta">index <code>1348</code> · science &amp; technology · gold <b>B</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: A simply supported beam is subjected to a linearly varying distributed load $q(x)=\frac{x}{L}q_{0}$ with maximum intensity q0 at B. The beam has a length L = 4 m and rectangular cross section with a width of 200 mm and height of 300 mm. Determine the maximum permissible value for the maximum intensity, q0, if the allowable normal stresses in tension and compression are 120 MPa.&lt;image 1&gt;
+Options:
+A. $q_{0}=250.7403\frac{kN}{m}$
+B. $q_{0}=350.7403\frac{kN}{m}$
+C. $q_{0}=450.7403\frac{kN}{m}$
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/601.png" alt="" /></div><div class="meta">index <code>601</code> · instance reasoning · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: How is the sun appearing in the sky?
+Options:
+A. High and bright
+B. Just rising
+C. Behind the couple
+D. Just going down
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C. Behind the couple</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/131.png" alt="" /></div><div class="meta">index <code>131</code> · coarse perception · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: What is the dominant color palette of the image?
+Options:
+A. Red and black
+B. Green and brown
+C. White and pink
+D. Blue and gray
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/76.png" alt="" /></div><div class="meta">index <code>76</code> · coarse perception · gold <b>A</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: What is the main theme of the image?
+Options:
+A. Bearded men
+B. Bathroom hygiene
+C. Royal monarchy
+D. Home decor
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/797.png" alt="" /></div><div class="meta">index <code>797</code> · logical reasoning · gold <b>A</b> · pred <b>D</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: The movie critic liked to count the number of actors in each movie he saw. How many movies had at least 30 actors but fewer than 47 actors? (Unit: movies)
+Options:
+A. 5
+B. 3
+C. 2
+D. 4
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1144.png" alt="" /></div><div class="meta">index <code>1144</code> · math · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: A new company started production. Job 1 was completed, and Job 2 remains in production. Here is the information from the job cost sheets from their first and only jobs so far: &lt;image 1&gt; Using the information provided, what is the balance in finished goods inventory?
+Options:
+A. $10,208
+B. $10,308
+C. $10,408
+D. $10,508
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B. $10,308</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/234.png" alt="" /></div><div class="meta">index <code>234</code> · coarse perception · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: Which of the following captions best describes this image?
+Options:
+A. A person taking a photo with a camera
+B. A group of people watching a movie in a theater
+C. A person reading a book in a library
+D. A woman applying makeup in front of a mirror
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1006.png" alt="" /></div><div class="meta">index <code>1006</code> · math · gold <b>D</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Move the ruler to measure the length of the line to the nearest centimeter. The line is about (_) centimeters long.
+Options:
+A. 4
+B. 5
+C. 6
+D. 7
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/14.png" alt="" /></div><div class="meta">index <code>14</code> · coarse perception · gold <b>A</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: What is the main subject of the image?
+Options:
+A. Sky
+B. Water
+C. Sun
+D. Clouds
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/371.png" alt="" /></div><div class="meta">index <code>371</code> · fine-grained perception · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: In the given image, where is the chair made out of tree trunks and stumps located?
+Options:
+A. On the left side of the image
+B. Close to the right side of the image
+C. In the center of the image
+D. Behind the tree in the image
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1061.png" alt="" /></div><div class="meta">index <code>1061</code> · math · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: The train conductor made sure to count the number of passengers on each train. What is the smallest number of passengers? (Unit: passengers)
+Options:
+A. 50
+B. 30
+C. 25
+D. 40
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/634.png" alt="" /></div><div class="meta">index <code>634</code> · instance reasoning · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Which solution has a higher concentration of blue particles?
+Options:
+A. Solution B
+B. neither; their concentrations are the same
+C. Solution A
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/819.png" alt="" /></div><div class="meta">index <code>819</code> · logical reasoning · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Can you find the missing term?
+Options:
+A. 0
+B. 5
+C. 1
+D. 10
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1119.png" alt="" /></div><div class="meta">index <code>1119</code> · math · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Lines $l$, $m$, and $n$ are perpendicular bisectors of $\triangle PQR$ and meet at $T$. If $TQ = 2x$, $PT = 3y - 1$, and $TR = 8$, find $z$.
+Options:
+A. 3
+B. 4
+C. 5
+D. 6
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> The problem states that lines $l$, $m$, and $n$ are the perpendicular bisectors of $\triangle PQR$ and meet at point $T</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1160.png" alt="" /></div><div class="meta">index <code>1160</code> · math · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: For an economics project, Colleen determined the cost of ferry rides for bicycles and cars. How much higher is the fare for a car on the Mukilteu-Clinton ferry than on the Southport-Fort Fisher ferry? (Unit: $)
+Options:
+A. 0
+B. 1
+C. 2
+D. 4
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1035.png" alt="" /></div><div class="meta">index <code>1035</code> · math · gold <b>D</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: As shown in the figure, in Rt△ABC, ∠BAC = 90.0, AD ⊥ BC at D, DE ⊥ AB at E, AD = 3.0, DE = 2.0, then the length of CD is ()
+Options:
+A. \frac{21}{2}
+B. \frac{√{15}}{2}
+C. \frac{9}{2}
+D. \frac{3√{5}}{2}
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/485.png" alt="" /></div><div class="meta">index <code>485</code> · fine-grained perception · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: What color is the microphone in the image?
+Options:
+A. Silver
+B. White
+C. Black
+D. Red
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C. Black</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1322.png" alt="" /></div><div class="meta">index <code>1322</code> · science &amp; technology · gold <b>C</b> · pred <b>D</b> (✗)</div><pre class="prompt">Question: What stage is represented by D in the diagram?
+Options:
+A. 5
+B. none of the above
+C. 7
+D. 6
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/249.png" alt="" /></div><div class="meta">index <code>249</code> · coarse perception · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Which mood does this image convey?
+Options:
+A. Sad
+B. Cozy
+C. Happy
+D. Angry
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A. Sad</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1387.png" alt="" /></div><div class="meta">index <code>1387</code> · science &amp; technology · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: What is label H pointing to?
+Options:
+A. Golgi body
+B. Endoplasmic reticulum
+C. Nucleus
+D. Mitochondrion
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1140.png" alt="" /></div><div class="meta">index <code>1140</code> · math · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: As shown in the figure, points A, B, and C are three points on ⊙O, and the straight line CD and ⊙O are tangent to point C. If ∠DCB = 40.0, then the degree of ∠CAB is ()
+Options:
+A. 40°
+B. 50°
+C. 80°
+D. 100°
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/599.png" alt="" /></div><div class="meta">index <code>599</code> · instance reasoning · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: Which two objects are closest to each other?
+Options:
+A. Soccer player and football team
+B. Soccer player and coach
+C. Football player and politician
+D. Football player and coach
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/439.png" alt="" /></div><div class="meta">index <code>439</code> · fine-grained perception · gold <b>C</b> · pred <b>A</b> (✗)</div><pre class="prompt">Question: How many guitars are being played in the image?
+Options:
+A. Two
+B. One
+C. Three
+D. Four
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A. Two</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/790.png" alt="" /></div><div class="meta">index <code>790</code> · logical reasoning · gold <b>D</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Which of the following domains has the most number of BPE Tokens?
+Options:
+A. Legal 
+B. Code 
+C. Conversational 
+D. Science
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/900.png" alt="" /></div><div class="meta">index <code>900</code> · logical reasoning · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: How many algorithms have accuracies higher than 2?
+Options:
+A. 4
+B. 6
+C. 8
+D. 2
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/578.png" alt="" /></div><div class="meta">index <code>578</code> · instance reasoning · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: In this comparison picture, are the left and right modules the same shape?
+Options:
+A. same
+B. Not the same
+C. Can&#x27;t judge
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A. same</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/15.png" alt="" /></div><div class="meta">index <code>15</code> · coarse perception · gold <b>C</b> · pred <b>A</b> (✗)</div><pre class="prompt">Question: What object dominates the image in the foreground?
+Options:
+A. A rocky and grassy field
+B. Hills in the distance
+C. A dirt road leading up a grassy hill to a rocky path
+D. A large grey rock
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1069.png" alt="" /></div><div class="meta">index <code>1069</code> · math · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: As shown in the figure, AB is the diameter of ⊙O, and point C is on ⊙O. If ∠A = 40.0, then the degree of ∠B is ()
+Options:
+A. 80°
+B. 60°
+C. 50°
+D. 40°
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/833.png" alt="" /></div><div class="meta">index <code>833</code> · logical reasoning · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Is the window in front of the woman open or closed?
+Options:
+A. Half-open
+B. Open
+C. Closed
+D. Unable to determine
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/51.png" alt="" /></div><div class="meta">index <code>51</code> · coarse perception · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: what style is depicted in this image?
+Options:
+A. impressionism
+B. post-Impressionism
+C. modernism
+D. dadaism
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/778.png" alt="" /></div><div class="meta">index <code>778</code> · logical reasoning · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: what python code is gonna generate the result as shown in the image?
+Options:
+A. if 5 &gt; 2:
+print(&quot;Five is greater than two!&quot;)
+print(&quot;Five is greater than two!&quot;)
+B. if 5 &gt; 2:
+print(&quot;Five is greater than two!&quot;) 
+if 5 &gt; 2:
+print(&quot;Five is greater than two!&quot;)
+C. #This is a comment.
+print(&quot;Hello, World!&quot;)
+D. if 5 &gt; 2:
+print(&quot;Five is greater than two!&quot;)
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1015.png" alt="" /></div><div class="meta">index <code>1015</code> · math · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: As shown in the figure, P is a point outside ⊙O, PA and PB intersect ⊙O at two points C and D respectively. It is known that the central angles of ⁀AB and ⁀CD are 90.0 and 50.0 respectively, then ∠P = ()
+Options:
+A. 45°
+B. 40°
+C. 25°
+D. 20°
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/515.png" alt="" /></div><div class="meta">index <code>515</code> · instance reasoning · gold <b>D</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Which object is taller, the tree or the building?
+Options:
+A. Cannot be determined
+B. The building
+C. They are the same height
+D. The tree
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B. The building</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/959.png" alt="" /></div><div class="meta">index <code>959</code> · logical reasoning · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: What would be the ideal complexity of the curve which can beused for separating the two classes shown in the image below?&lt;image 1&gt;
+Options:
+A. Linear
+B. Quadratic
+C. Cubic
+D. insufficient data to draw conclusion
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/496.png" alt="" /></div><div class="meta">index <code>496</code> · fine-grained perception · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: What color is the hair of the woman in the image?
+Options:
+A. Black
+B. Brown
+C. Red
+D. Blonde
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1353.png" alt="" /></div><div class="meta">index <code>1353</code> · science &amp; technology · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: Which of the following options is consistent with the unit cell plane depicted below? &lt;image 1&gt;
+Options:
+A. SC {100}
+B. FCC {110}
+C. FCC {100}
+D. SC {110}
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1024.png" alt="" /></div><div class="meta">index <code>1024</code> · math · gold <b>C</b> · pred <b>D</b> (✗)</div><pre class="prompt">Question: A standing wave pattern is established in a string as shown. The wavelength of one of the component traveling waves is:&lt;image 1&gt;
+Options:
+A. 0.25 m
+B. 0.5 m
+C. 4 m
+D. 2 m
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1226.png" alt="" /></div><div class="meta">index <code>1226</code> · math · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: 如图，A，B两点被池塘隔开，在AB外选一点C，使点C能直接到达点A和点B，连接AC和BC，并分别找出AC和BC的中点M，N．如果测得MN＝20m，那么A，B两点的距离是（）
+Options:
+A. 10m
+B. 20m
+C. 35m
+D. 40m
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1118.png" alt="" /></div><div class="meta">index <code>1118</code> · math · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: As shown in the figure, in the diamond ABCD, two diagonal lines AC = 12.0, BD = 16.0, then the edge length of this diamond is ()
+Options:
+A. 10
+B. 8
+C. 6
+D. 5
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/537.png" alt="" /></div><div class="meta">index <code>537</code> · instance reasoning · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: What is the position of the woman in relation to the man in the image?
+Options:
+A. In front of the man
+B. Behind the man
+C. To the side of the man
+D. Cannot be determined
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/627.png" alt="" /></div><div class="meta">index <code>627</code> · instance reasoning · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Which solution has a higher concentration of yellow particles?
+Options:
+A. Solution A
+B. neither; their concentrations are the same
+C. Solution B
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1195.png" alt="" /></div><div class="meta">index <code>1195</code> · math · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: What is the sum of the values of posse and mortar?
+Options:
+A. 20
+B. 5
+C. 1
+D. 10
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/565.png" alt="" /></div><div class="meta">index <code>565</code> · instance reasoning · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: What is the relative position of the man playing the instrument to the person sitting in the chair?
+Options:
+A. They are next to each other
+B. They are facing each other
+C. The man playing the instrument is behind the person sitting in the chair
+D. Cannot be determined
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1180.png" alt="" /></div><div class="meta">index <code>1180</code> · math · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: How many bars have values larger than 100?
+Options:
+A. 1
+B. 2
+C. 3
+D. 4
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/475.png" alt="" /></div><div class="meta">index <code>475</code> · fine-grained perception · gold <b>A</b> · pred <b>D</b> (✗)</div><pre class="prompt">Question: What is the color of the ball closest to the man?
+Options:
+A. White
+B. Red
+C. Blue
+D. Brown
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1498.png" alt="" /></div><div class="meta">index <code>1498</code> · science &amp; technology · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Think about the magnetic force between the magnets in each pair. Which of the following statements is true?
+Options:
+A. The magnetic force is weaker in Pair 2.
+B. The strength of the magnetic force is the same in both pairs.
+C. The magnetic force is weaker in Pair 1.
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/152.png" alt="" /></div><div class="meta">index <code>152</code> · coarse perception · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Which image is the brightest one?
+Options:
+A. upper left
+B. upper right
+C. down left
+D. down right
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/190.png" alt="" /></div><div class="meta">index <code>190</code> · coarse perception · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: This image is an example of which style?
+Options:
+A. HDR
+B. Baroque
+C. oil paint
+D. comic
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/217.png" alt="" /></div><div class="meta">index <code>217</code> · coarse perception · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Which one is the correct caption of this image?
+Options:
+A. a messy bed room a bed a chair and boxes
+B. A woman laying in bed next to a large stuffed animal.
+C. A tennis player resting on the floor under a hat.
+D. Odd plant and flower arrangement in a vase.
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/857.png" alt="" /></div><div class="meta">index <code>857</code> · logical reasoning · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Which action is performed in this image?
+Options:
+A. singing
+B. abseiling
+C. paragliding
+D. celebrating
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/230.png" alt="" /></div><div class="meta">index <code>230</code> · coarse perception · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: Which category does this image belong to?
+Options:
+A. MRI image
+B. icon
+C. microscopic image
+D. abstract painting
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/506.png" alt="" /></div><div class="meta">index <code>506</code> · instance reasoning · gold <b>C</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: What is the age gap between these two people in image? (Unit: years)
+Options:
+A. 4
+B. 5
+C. 6
+D. 7
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1169.png" alt="" /></div><div class="meta">index <code>1169</code> · math · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: As shown in the figure, ⊙O is the circumscribed circle of the quadrilateral ABCD, if ∠O = 110.0, then the degree of ∠C is ()
+Options:
+A. 125°
+B. 120°
+C. 105°
+D. 90°
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1097.png" alt="" /></div><div class="meta">index <code>1097</code> · math · gold <b>D</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: What is the total percentage of people  who say that they do either less or more often than the usual amount of exercise during the coronavirus pandemic in the United States as of April 2020?
+Options:
+A. 40
+B. 41
+C. 42
+D. 44
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/908.png" alt="" /></div><div class="meta">index <code>908</code> · logical reasoning · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: What is the ratio of instagram to google?
+Options:
+A. 2
+B. 0
+C. 1
+D. 3
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/428.png" alt="" /></div><div class="meta">index <code>428</code> · fine-grained perception · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: How many bananas are there in the image?
+Options:
+A. 3
+B. 2
+C. 4
+D. 5
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B. 2</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/138.png" alt="" /></div><div class="meta">index <code>138</code> · coarse perception · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: Which mood does this image convey?
+Options:
+A. Sad
+B. Anxious
+C. Happy
+D. Angry
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1274.png" alt="" /></div><div class="meta">index <code>1274</code> · science &amp; technology · gold <b>C</b> · pred <b>A</b> (✗)</div><pre class="prompt">Question: How many stages does the whitefly nymph life cycle consist of?
+Options:
+A. 4
+B. 5
+C. 6
+D. 3
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A. 4</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/411.png" alt="" /></div><div class="meta">index <code>411</code> · fine-grained perception · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: where is the cat?
+Options:
+A. top-right
+B. top-left
+C. bottom-left
+D. bottom-right
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/747.png" alt="" /></div><div class="meta">index <code>747</code> · instance reasoning · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: What&#x27;s the function of the demonstrated object?
+Options:
+A. Draw
+B. cut
+C. deposit
+D. refrigeration
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/853.png" alt="" /></div><div class="meta">index <code>853</code> · logical reasoning · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Can you find the missing shape in this picture puzzle?
+Options:
+A. A
+B. B
+C. C
+D. D
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/548.png" alt="" /></div><div class="meta">index <code>548</code> · instance reasoning · gold <b>C</b> · pred <b>D</b> (✗)</div><pre class="prompt">Question: What is the relative position between the apartment building and the parking lot?
+Options:
+A. The building is surrounded by the parking lot.
+B. The parking lot is situated behind the building.
+C. The building is on one side of the parking lot.
+D. The parking lot is located in front of the building.
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1001.png" alt="" /></div><div class="meta">index <code>1001</code> · math · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: What is the value of f(0)?
+Options:
+A. -1
+B. 0
+C. 1
+D. 10
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/625.png" alt="" /></div><div class="meta">index <code>625</code> · instance reasoning · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: Which of the insects is an ant?
+Options:
+A. Insect A
+B. Insect C
+C. All
+D. Insect D
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/85.png" alt="" /></div><div class="meta">index <code>85</code> · coarse perception · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: What is the most prominent feature in the image?
+Options:
+A. Sailboats
+B. City skyline
+C. Sky
+D. Sun
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/753.png" alt="" /></div><div class="meta">index <code>753</code> · logical reasoning · gold <b>D</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: How many models in the table have a model size larger than 10B?
+Options:
+A. 1
+B. 8
+C. 10
+D. 11
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B. 8</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/860.png" alt="" /></div><div class="meta">index <code>860</code> · logical reasoning · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: In the diagram shown, which organism consumes small fish as food?
+Options:
+A. mahi mahi
+B. large shark
+C. zooplankton
+D. mackerel
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/998.png" alt="" /></div><div class="meta">index <code>998</code> · logical reasoning · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Choose the missing letters from below to form a word, using all letters presented
+Options:
+A. A, R, N
+B. R, D, N
+C. I, A, M
+D. H, O, W
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1370.png" alt="" /></div><div class="meta">index <code>1370</code> · science &amp; technology · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: From the above food web diagram, if all th bettle dies then
+Options:
+A. guava increases
+B. fungi decreases
+C. bacteria increases
+D. guava decreases
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/57.png" alt="" /></div><div class="meta">index <code>57</code> · coarse perception · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: What is the main theme of the image?
+Options:
+A. Nature
+B. Transportation
+C. Travel
+D. Outdoor recreation
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/270.png" alt="" /></div><div class="meta">index <code>270</code> · fine-grained perception · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: What is the color of the roof of the building in the image?
+Options:
+A. Brown
+B. White
+C. Tan
+D. Gray
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1038.png" alt="" /></div><div class="meta">index <code>1038</code> · math · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: Which operation of fractions is represented by this formula?
+Options:
+A. Add
+B. Subtract
+C. Multiply
+D. Devide
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1407.png" alt="" /></div><div class="meta">index <code>1407</code> · science &amp; technology · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: What is released back into the atmosphere?
+Options:
+A. photosynthesis
+B. sunlight
+C. carbon dioxide
+D. carbon
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D. carbon</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1009.png" alt="" /></div><div class="meta">index <code>1009</code> · math · gold <b>A</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Peninsular Research is initiating coverage of a mature manufacturing industry. John Jones, CFA, head of the research department, gathered the following fundamental industry and market data to help in his analysis: &lt;image 1&gt; Compute the price-to-earnings $(\frac{P_0}/E_{1})$ ratio for the industry based on this fundamental data
+Options:
+A. 30.0
+B. Other Answers
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/280.png" alt="" /></div><div class="meta">index <code>280</code> · fine-grained perception · gold <b>D</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: What is the dominant color of the person&#x27;s shirt in the image?
+Options:
+A. Beige
+B. Gray
+C. White
+D. Black
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1267.png" alt="" /></div><div class="meta">index <code>1267</code> · science &amp; technology · gold <b>D</b> · pred <b>A</b> (✗)</div><pre class="prompt">Question: What is the object labeled E?
+Options:
+A. Earth
+B. Uranus
+C. Mars
+D. Venus
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/511.png" alt="" /></div><div class="meta">index <code>511</code> · instance reasoning · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Which of the following statements match the image?
+Options:
+A. A yellow triangle is below a red rectangle.
+B. A cross is above a cyan shape.
+C. A rectangle is above a cyan shape.
+D. A cyan rectangle is below a red shape.
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1230.png" alt="" /></div><div class="meta">index <code>1230</code> · math · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: 如图，PA是⊙O的切线，切点为A，OP＝4，∠APO＝30°，则⊙O的半径长为（）
+Options:
+A. 1
+B. √{3}
+C. 2
+D. 3
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1011.png" alt="" /></div><div class="meta">index <code>1011</code> · math · gold <b>B</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: What is the y-intercept of this function?
+Options:
+A. 0
+B. 1
+C. 2
+D. 3
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1058.png" alt="" /></div><div class="meta">index <code>1058</code> · math · gold <b>D</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: Groups of men from three different areas of the country are to be tested for mean weight. The entries in Table 12.13 are the weights for the different groups. &lt;image 1&gt; What is the Mean Square Factor?
+Options:
+A. 2,309.6
+B. 2,325.5
+C. 2,328.1
+D. 2,469.6
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/799.png" alt="" /></div><div class="meta">index <code>799</code> · logical reasoning · gold <b>D</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Complete the matrix.
+Options:
+A. A
+B. B
+C. C
+D. D
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/864.png" alt="" /></div><div class="meta">index <code>864</code> · logical reasoning · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: Subtract all brown things. Subtract all tiny blue metallic objects. How many objects are left?
+Options:
+A. 0
+B. 4
+C. 3
+D. 2
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D. 2</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1246.png" alt="" /></div><div class="meta">index <code>1246</code> · math · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: The area of which figure can be calculated using the formula in this picture?
+Options:
+A. Trapezoid.
+B. Ellipse.
+C. Triangle.
+D. Circle.
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/461.png" alt="" /></div><div class="meta">index <code>461</code> · fine-grained perception · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: How many ponds are clearly visible in this image?
+Options:
+A. One
+B. Three
+C. Two
+D. Four
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B. Three</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/198.png" alt="" /></div><div class="meta">index <code>198</code> · coarse perception · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: which image is more colorful?
+Options:
+A. The first image
+B. The second image
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/1277.png" alt="" /></div><div class="meta">index <code>1277</code> · science &amp; technology · gold <b>B</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: When a spring does work on an object, we cannot find the work by simply multiplying the spring force by the object&#x27;s displacement. The reason is that there is no one value for the force-it changes. However, we can split the displacement up into an infinite number of tiny parts and then approximate the force in each as being constant. Integration sums the work done in all those parts. Here we use the generic result of the integration._x000D_
+_x000D_
+In Figure, a cumin canister of mass $m=0.40 \mathrm{~kg}$ slides across a horizontal frictionless counter with speed $v=0.50 \mathrm{~m} / \mathrm{s}$. It then runs into and compresses a spring of spring constant $k=750 \mathrm{~N} / \mathrm{m}$. When the canister is momentarily stopped by the spring, by what distance $d$ is the spring compressed?
+Options:
+A. 0
+B. 1.2
+C. 0.8
+D. 12
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/928.png" alt="" /></div><div class="meta">index <code>928</code> · logical reasoning · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: Which continent is highlighted?
+Options:
+A. Europe
+B. South America
+C. Antarctica
+D. Africa
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1056.png" alt="" /></div><div class="meta">index <code>1056</code> · math · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Hint: Please answer the question and provide the correct option letter, e.g., A, B, C, D, at the end.
+Question: In which year the market share of KLA is highest?
+Options:
+A. 2019
+B. 2011
+C. 2020
+D. 2014
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/476.png" alt="" /></div><div class="meta">index <code>476</code> · fine-grained perception · gold <b>B</b> · pred <b>C</b> (✗)</div><pre class="prompt">Question: How many balls are on the table?
+Options:
+A. 6
+B. 4
+C. 5
+D. 3
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#a44040"><div class="row"><img loading="lazy" src="mmstar/81.png" alt="" /></div><div class="meta">index <code>81</code> · coarse perception · gold <b>D</b> · pred <b>B</b> (✗)</div><pre class="prompt">Question: What is the most frequent color shown in the image?
+Options:
+A. White
+B. Brown
+C. Blue
+D. Green
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/52.png" alt="" /></div><div class="meta">index <code>52</code> · coarse perception · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: What is the main focus of the image?
+Options:
+A. A fountain with a horse and dragon statue
+B. A building with sculptures in the front yard
+C. A park with a statue of a man on a horse
+D. A statue of a lion and a dragon in front of a building
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1306.png" alt="" /></div><div class="meta">index <code>1306</code> · science &amp; technology · gold <b>C</b> · pred <b>C</b> (✓)</div><pre class="prompt">Question: What is represented y B?
+Options:
+A. none of the above
+B. the mantle
+C. the core
+D. the crust
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> C</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/333.png" alt="" /></div><div class="meta">index <code>333</code> · fine-grained perception · gold <b>D</b> · pred <b>D</b> (✓)</div><pre class="prompt">Question: What color is the shirt of the man playing the guitar?
+Options:
+A. Blue
+B. Brown
+C. Red
+D. Black
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> D</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1281.png" alt="" /></div><div class="meta">index <code>1281</code> · science &amp; technology · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Which letter represents the part of the life cycle in which the plant flowers?
+Options:
+A. B
+B. F
+C. A
+D. K
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/1330.png" alt="" /></div><div class="meta">index <code>1330</code> · science &amp; technology · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: What word best describes phase D in the diagram?
+Options:
+A. Full
+B. Waning gibbous
+C. New
+D. Waxing crescent
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/49.png" alt="" /></div><div class="meta">index <code>49</code> · coarse perception · gold <b>A</b> · pred <b>A</b> (✓)</div><pre class="prompt">Question: Which image is more brightful?
+Options:
+A. The first image
+B. The second image
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> A</div></section><section class="card" style="border-left-color:#2d7a3e"><div class="row"><img loading="lazy" src="mmstar/560.png" alt="" /></div><div class="meta">index <code>560</code> · instance reasoning · gold <b>B</b> · pred <b>B</b> (✓)</div><pre class="prompt">Question: In nature, what&#x27;s the relationship between these two creatures?
+Options:
+A. Predatory relationships
+B. Competitive relationships
+C. Parasitic relationships
+D. Symbiotic relationship
+Answer with the option letter only.</pre><div class="pred"><b>Model</b> B</div></section>
+  </div>
+</body>
+</html>
