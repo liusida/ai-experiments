@@ -176,12 +176,23 @@ class AppState:
         self.revision: int = 0
         self.last_changed_cell_indices: list[int] = []
         self.kernel_cache: OrderedDict[str, Kernel] = OrderedDict()
+        # One lock per resolved script path — Kernel is shared mutable state per file.
+        self.kernel_run_locks: dict[str, asyncio.Lock] = {}
         self.watcher = FileWatcher()
         self.ws_clients: set[WebSocket] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
 
 
 state = AppState()
+
+
+def _kernel_run_lock(path: Path) -> asyncio.Lock:
+    key = _kernel_cache_key(path)
+    lock = state.kernel_run_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        state.kernel_run_locks[key] = lock
+    return lock
 
 
 def _changed_cell_indices(old: list[Cell], new: list[Cell]) -> list[int]:
@@ -382,58 +393,64 @@ async def api_run(body: RunBody) -> dict:
     idx = body.cell_index
     if idx < 0 or idx >= len(state.cells):
         raise HTTPException(status_code=400, detail=f"cell_index out of range 0..{len(state.cells)-1}")
-    source = state.cells[idx].source
-    inject = dict(body.inject or {})
-    source_path = str(state.watched_path.resolve()) if state.watched_path is not None else None
-
-    chunk_queue: queue.Queue[tuple[str, str] | None] = queue.Queue()
-
-    def on_stdout(s: str) -> None:
-        if s:
-            chunk_queue.put(("stdout", s))
-
-    def on_stderr(s: str) -> None:
-        if s:
-            chunk_queue.put(("stderr", s))
-
-    kernel = _kernel_for_watched_path(state.watched_path)
-    if kernel is None:
+    watched = state.watched_path
+    if watched is None or not watched.is_file():
         raise HTTPException(status_code=400, detail="Watched file is not available")
 
-    def worker() -> tuple[str, str, bool]:
-        try:
-            return kernel.run_cell(
-                source,
-                inject=inject,
-                source_path=source_path,
-                on_stdout_chunk=on_stdout,
-                on_stderr_chunk=on_stderr,
-            )
-        finally:
-            chunk_queue.put(None)
+    async with _kernel_run_lock(watched.resolve()):
+        source = state.cells[idx].source
+        inject = dict(body.inject or {})
+        source_path = str(watched.resolve())
 
-    stdout, stderr = "", ""
-    ok = False
-    await _broadcast_ws_json({"type": "run_start", "cell_index": idx})
-    try:
-        fut = asyncio.create_task(asyncio.to_thread(worker))
-        while True:
-            item = await asyncio.to_thread(chunk_queue.get)
-            if item is None:
-                break
-            stream_name, text = item
-            await _broadcast_ws_json(
-                {
-                    "type": "run_stream",
-                    "cell_index": idx,
-                    "stream": stream_name,
-                    "text": text,
-                }
-            )
-        stdout, stderr, ok = await fut
-        return {"ok": ok, "cell_index": idx, "stdout": stdout, "stderr": stderr}
-    finally:
-        await _broadcast_ws_json({"type": "run_end", "cell_index": idx, "ok": ok})
+        chunk_queue: queue.Queue[tuple[str, str] | None] = queue.Queue()
+
+        def on_stdout(s: str) -> None:
+            if s:
+                chunk_queue.put(("stdout", s))
+
+        def on_stderr(s: str) -> None:
+            if s:
+                chunk_queue.put(("stderr", s))
+
+        kernel = _kernel_for_watched_path(watched)
+        if kernel is None:
+            raise HTTPException(status_code=400, detail="Watched file is not available")
+
+        def worker() -> tuple[str, str, bool]:
+            try:
+                return kernel.run_cell(
+                    source,
+                    inject=inject,
+                    source_path=source_path,
+                    start_line=state.cells[idx].start_line,
+                    on_stdout_chunk=on_stdout,
+                    on_stderr_chunk=on_stderr,
+                )
+            finally:
+                chunk_queue.put(None)
+
+        stdout, stderr = "", ""
+        ok = False
+        await _broadcast_ws_json({"type": "run_start", "cell_index": idx})
+        try:
+            fut = asyncio.create_task(asyncio.to_thread(worker))
+            while True:
+                item = await asyncio.to_thread(chunk_queue.get)
+                if item is None:
+                    break
+                stream_name, text = item
+                await _broadcast_ws_json(
+                    {
+                        "type": "run_stream",
+                        "cell_index": idx,
+                        "stream": stream_name,
+                        "text": text,
+                    }
+                )
+            stdout, stderr, ok = await fut
+            return {"ok": ok, "cell_index": idx, "stdout": stdout, "stderr": stderr}
+        finally:
+            await _broadcast_ws_json({"type": "run_end", "cell_index": idx, "ok": ok})
 
 
 @app.post("/api/reset")

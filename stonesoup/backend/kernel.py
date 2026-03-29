@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import ast
 import builtins
 import hashlib
+import linecache
 import re
 import traceback
 import warnings
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
+from types import CodeType
 from typing import Any, Callable
 
 # Headless matplotlib before any cell can ``import matplotlib.pyplot`` (avoids TkAgg in worker
@@ -54,6 +57,51 @@ CELL_START = re.compile(r"^\s*#\s*%%(.*)$")
 
 # Optional suffix on the same line, e.g. ``# %% Title # stonesoup:cell-input`` or ``# %% # stonesoup:cell-input``.
 CELL_INPUT_SUFFIX = re.compile(r"\s*#\s*stonesoup:\s*cell-input\s*$", re.IGNORECASE)
+
+
+_STONESOUP_CELL_FILENAME = "<stonesoup cell>"
+
+
+def _prime_linecache_for_exec(display_name: str, source: str) -> None:
+    """So tracebacks can show source for synthetic filenames; ``mtime`` None skips stat in checkcache."""
+    lines = source.splitlines(keepends=True)
+    if not lines:
+        lines = ["\n"]
+    else:
+        lines = [line if line.endswith("\n") else line + "\n" for line in lines]
+    linecache.cache[display_name] = (len(source), None, lines, display_name)
+
+
+def _adjust_syntax_error_to_file(exc: SyntaxError, source_path: str, start_line_1: int) -> None:
+    """Map cell-local ``SyntaxError`` line numbers to positions in ``source_path``."""
+    delta = start_line_1 - 1
+    exc.filename = source_path
+    if exc.lineno is not None:
+        exc.lineno += delta
+    if exc.end_lineno is not None:
+        exc.end_lineno += delta
+
+
+def _compile_cell(
+    source: str,
+    source_path: str | None,
+    start_line: int | None,
+) -> CodeType:
+    if source_path and start_line is not None and start_line >= 1:
+        if not source.strip():
+            return compile(source, source_path, "exec")
+        try:
+            tree = ast.parse(source, filename=source_path, mode="exec")
+            ast.increment_lineno(tree, start_line - 1)
+            return compile(tree, source_path, "exec")
+        except SyntaxError as exc:
+            _adjust_syntax_error_to_file(exc, source_path, start_line)
+            raise
+        except Exception:
+            pass
+
+    _prime_linecache_for_exec(_STONESOUP_CELL_FILENAME, source)
+    return compile(source, _STONESOUP_CELL_FILENAME, "exec")
 
 
 def fingerprint_marker_line(marker_line: str | None) -> str:
@@ -187,6 +235,7 @@ class Kernel:
         *,
         inject: dict[str, Any] | None = None,
         source_path: str | None = None,
+        start_line: int | None = None,
         on_stdout_chunk: Callable[[str], None] | None = None,
         on_stderr_chunk: Callable[[str], None] | None = None,
     ) -> tuple[str, str, bool]:
@@ -195,6 +244,9 @@ class Kernel:
 
         If ``inject`` is set, assign those names into the namespace before running
         the cell (shallow merge; later pipeline steps and iterations can overwrite).
+
+        When ``source_path`` and ``start_line`` (1-based first line of the cell body in that
+        file) are set, compile so tracebacks point at the watched file and matching line numbers.
 
         Optional ``on_stdout_chunk`` / ``on_stderr_chunk`` are invoked for each ``write``
         (for streaming to the UI).
@@ -212,7 +264,7 @@ class Kernel:
             self._apply_inject(inject)
             if source_path is not None:
                 self.globals["__file__"] = source_path
-            code = compile(source, "<stonesoup cell>", "exec")
+            code = _compile_cell(source, source_path, start_line)
             with redirect_stdout(out_sink), redirect_stderr(err_sink):
                 with warnings.catch_warnings():
                     warnings.filterwarnings(
