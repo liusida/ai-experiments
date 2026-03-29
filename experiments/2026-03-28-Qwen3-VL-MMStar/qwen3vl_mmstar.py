@@ -3,9 +3,11 @@
 """**Qwen3-VL-8B-Instruct** on **MMStar**, with an educational walkthrough of the HF forward path.
 
 Cells after **Load Qwen3-VL** mirror (at high level) ``Qwen3VLModel.forward`` and
-``Qwen3VLForConditionalGeneration.forward`` in Hugging Face **transformers**. Open the modeling
-file printed by ``transformers_source_hint`` and read alongside (e.g. fusion ~L1293–1309, LM head
-~L1522–1541 in ``modeling_qwen3_vl.py``).
+``Qwen3VLForConditionalGeneration.forward`` in Hugging Face **transformers**. The trunk is spelled out
+stepwise (merged embeds → ``visual_pos_masks`` / ``deepstack_visual_embeds`` → ``compute_3d_position_ids``
+→ ``language_model``) so ``vision_out.deepstack_features`` is visibly consumed—not a single opaque
+``model.model(**kwargs)`` lump. Open the modeling file printed by ``transformers_source_hint`` and read
+alongside (e.g. fusion ~L1293–1367, LM head ~L1522–1541 in ``modeling_qwen3_vl.py``).
 
 Install (once), from repo root::
 
@@ -13,7 +15,10 @@ Install (once), from repo root::
   uv pip install "git+https://github.com/huggingface/transformers"
 
 **Stonesoup:** Watch this file; run cells in order after **Reset** when needed (restarts backend).
-**Load MMStar row** and **Generate + HTML report** print HTML with a leading ``# stonesoup:render=html`` line
+**Load MMStar row** uses the OpenCompass/VLMEvalKit-style HF mirror (**separate A–D columns**) and the
+**Qwen3-VL MCQ** user-text template from VLMEvalKit ``Qwen3VLPromptMixin._build_mcq_prompt`` (not the generic
+``ImageMCQDataset`` “Please select…” line).
+**Generate + HTML report** prints HTML with a leading ``# stonesoup:render=html`` line
 (stripped in the UI; see ``EXPERIMENT_PYTHON.md``) so the pane does not rely on heuristics.
 
 **Terminal:** ``uv run python experiments/2026-03-28-Qwen3-VL-MMStar/qwen3vl_mmstar.py``
@@ -25,11 +30,16 @@ import base64
 import html
 import inspect
 import io
+import string
 from pathlib import Path
+
+from PIL import Image
 
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers.masking_utils import create_causal_mask
+from transformers.modeling_outputs import BaseModelOutputWithPast
 
 try:
     from stonesoup import STONESOUP_RENDER_HTML
@@ -63,17 +73,59 @@ def n_params(module: torch.nn.Module) -> int:
     return sum(p.numel() for p in module.parameters())
 
 
+def mmstar_opencompass_to_pil(row: dict) -> Image.Image:
+    """Decode image from ``morpheushoc/MMStar_opencompass`` (base64 JPEG) or pass through a PIL ``Image``."""
+    raw = row["image"]
+    if isinstance(raw, Image.Image):
+        return raw.convert("RGB")
+    if isinstance(raw, str):
+        return Image.open(io.BytesIO(base64.standard_b64decode(raw))).convert("RGB")
+    raise TypeError(f"Unsupported image field type: {type(raw)}")
+
+
+def mmstar_qwen3_vl_prompt(row: dict) -> str:
+    """MMStar user text per Qwen3-VL in VLMEvalKit: ``Qwen3VLPromptMixin._build_mcq_prompt``.
+
+    MCQ datasets (including MMStar) use this instead of the generic ``ImageMCQDataset`` line
+    ``Please select the correct answer…`` — the mixin ends with **Answer with the option letter only.**
+
+    See ``vlmeval/vlm/qwen3_vl/prompt.py`` (VLMEvalKit, Qwen3-VL mixin).
+    """
+    question = row["question"]
+    options: dict[str, object] = {}
+    for cand in string.ascii_uppercase:
+        if cand not in row:
+            continue
+        item = row[cand]
+        if item is None:
+            continue
+        if isinstance(item, str) and not item.strip():
+            continue
+        options[cand] = item
+    hint = row.get("hint")
+    prompt = ""
+    if hint is not None and str(hint).strip():
+        prompt += f"Hint: {hint}\n"
+    prompt += f"Question: {question}\n"
+    if options:
+        prompt += "Options:\n"
+        for key, item in options.items():
+            prompt += f"{key}. {item}\n"
+        prompt += "Answer with the option letter only."
+    return prompt.rstrip()
+
+
 # %% Load MMStar row
 
-DATASET_ID = "Lin-Chen/MMStar"
-DATASET_CONFIG = "val"  # single parquet split ``val``
-ROW_INDEX = 0
+# OpenCompass layout (A–D columns) — same framing VLMEvalKit uses for MMStar; see lmms-eval #901 / VLMEvalKit.
+DATASET_ID = "morpheushoc/MMStar_opencompass"
+ROW_INDEX = 7
 
-ds = load_dataset(DATASET_ID, DATASET_CONFIG, split="val")
+ds = load_dataset(DATASET_ID, split="val")
 row = ds[ROW_INDEX]
-question: str = row["question"]
 gold: str = row["answer"]
-image = row["image"]  # ``datasets`` Image → PIL
+image = mmstar_opencompass_to_pil(row)
+user_text = mmstar_qwen3_vl_prompt(row)
 
 _row_id = row.get("index", ROW_INDEX)
 _img_src = pil_png_data_uri(image)
@@ -84,8 +136,8 @@ _row_preview = (
     f'border:1px solid #555;border-radius:4px;display:block"/></p>'
     f"<p><b>index</b> {html.escape(str(_row_id))} &nbsp; "
     f"<b>gold</b> {html.escape(gold)}</p>"
-    f"<p><b>question</b></p>"
-    f'<p style="margin:0;white-space:pre-wrap">{html.escape(question)}</p>'
+    f"<p><b>prompt (Qwen3-VL MCQ mixin)</b></p>"
+    f'<p style="margin:0;white-space:pre-wrap">{html.escape(user_text)}</p>'
     f"</div>"
 )
 print(STONESOUP_RENDER_HTML + _row_preview)
@@ -123,9 +175,7 @@ print("image_token_id:", model.config.image_token_id)
 print("submodules: .model.visual | .model.language_model | .lm_head")
 
 # %% Build chat inputs (processor)
-
-ANSWER_HINT = "Answer with the option letter only (e.g. A, B, C, or D)."
-user_text = f"{question}\n\n{ANSWER_HINT}"
+print("user_text:\n", user_text)
 
 messages = [
     {
@@ -155,6 +205,8 @@ for k, v in inputs.items():
 
 _n_img_tok = (inputs.input_ids == model.config.image_token_id).sum().item()
 print("image placeholder token count (== image_token_id):", _n_img_tok)
+print("================================================")
+print(processor.tokenizer.decode(inputs.input_ids))
 
 # %% Step: text embeddings
 
@@ -171,7 +223,14 @@ with torch.inference_mode():
         inputs.image_grid_thw,
         return_dict=True,
     )
-
+print("vision_out keys:", vision_out.keys())
+print("pooler_output length:", len(vision_out.pooler_output))
+print("deepstack_features length:", len(vision_out.deepstack_features))
+print("vision_out last_hidden_state:", vision_out.last_hidden_state.shape)
+print("vision_out pooler_output[0]:", vision_out.pooler_output[0].shape)
+for i in range(len(vision_out.deepstack_features)):
+    print(f"vision_out deepstack_features[{i}]:", vision_out.deepstack_features[i].shape)
+print("================================================")
 _img_chunks = vision_out.pooler_output
 print("pooler_output: list of", len(_img_chunks), "chunks; first chunk shape:", tuple(_img_chunks[0].shape))
 image_embeds_flat = torch.cat(_img_chunks, dim=0).to(
@@ -195,41 +254,157 @@ _image_mask, _video_mask = model.model.get_placeholder_mask(
     image_features=image_embeds_flat,
 )
 _merged = _merged.masked_scatter(_image_mask, image_embeds_flat)
+print("The input embeddings are ready to be passed to the language model:\n", _merged.shape)
 
 _non_image = (inputs.input_ids != model.config.image_token_id).unsqueeze(-1)
 _diff_masked = (_merged - inputs_embeds) * _non_image
 print("max |Δ embed| on non-image positions:", _diff_masked.abs().max().item())
 print("(expect 0 — only <|image_pad|> rows should change)")
 
-# %% Step: full backbone forward (sanity)
+# %% Step: vision_out → deepstack args (no second vision pass)
+# modeling_qwen3_vl.py ~1323–1341: image-only path sets ``visual_pos_masks`` and passes
+# ``deepstack_visual_embeds`` (same tensors as ``vision_out.deepstack_features``) into ``language_model``.
+# Collapse the expanded placeholder mask to one bool per token; align deepstack to LM dtype/device.
+_visual_pos_masks = _image_mask[..., 0].contiguous()
+_deepstack_visual_embeds = None
+if _ds is not None:
+    _deepstack_visual_embeds = [t.to(device=_merged.device, dtype=_merged.dtype) for t in _ds]
 
-_model_in_keys = (
-    "input_ids",
-    "attention_mask",
-    "pixel_values",
-    "image_grid_thw",
-    "pixel_values_videos",
-    "video_grid_thw",
-    "mm_token_type_ids",
+print("visual_pos_masks:", tuple(_visual_pos_masks.shape), "| n_true:", int(_visual_pos_masks.sum().item()))
+print(
+    "deepstack_visual_embeds:",
+    None if _deepstack_visual_embeds is None else [tuple(t.shape) for t in _deepstack_visual_embeds],
 )
-_model_kw = {k: inputs[k] for k in _model_in_keys if k in inputs}
+
+# %% Step: compute_3D position ids for language_model
+# ~1347–1356: ``Qwen3VLModel.compute_3d_position_ids`` (may set ``model.model.rope_deltas`` as side effect).
+_mm_tid = inputs["mm_token_type_ids"] if "mm_token_type_ids" in inputs else None
+_vgrid = inputs["video_grid_thw"] if "video_grid_thw" in inputs else None
+
+_position_ids = model.model.compute_3d_position_ids(
+    input_ids=inputs.input_ids,
+    image_grid_thw=inputs.image_grid_thw,
+    video_grid_thw=_vgrid,
+    inputs_embeds=_merged,
+    attention_mask=inputs.attention_mask,
+    past_key_values=None,
+    mm_token_type_ids=_mm_tid,
+)
+print("position_ids:", None if _position_ids is None else tuple(_position_ids.shape), _position_ids.dtype)
+print("================================================")
+print("position_ids:\n", _position_ids)
+
+# %% Step: language_model forward layer-by-layer (same as ``Qwen3VLTextModel.forward``)
+# Mirrors ``modeling_qwen3_vl.py`` ~886–939: causal mask → shared RoPE → for each ``decoder_layer``,
+# then optional ``_deepstack_process``, then final RMSNorm. Set ``_LM_TRACE_ALL_LAYERS`` / ``_LM_TRACE_EVERY``
+# to control how much is printed; ``_lm_trace`` holds per-step dicts for programmatic inspection.
+_lm = model.model.language_model
+_past_kv = None  # set DynamicCache + use_cache in modeling if you decode with KV later
+_inputs_embeds_lm = _merged
+
+_lm_cache_pos = torch.arange(
+    0,
+    _inputs_embeds_lm.shape[1],
+    device=_inputs_embeds_lm.device,
+)
+_lm_pos_ids = _position_ids
+if _lm_pos_ids is None:
+    _lm_pos_ids = _lm_cache_pos.view(1, 1, -1).expand(4, _inputs_embeds_lm.shape[0], -1)
+elif _lm_pos_ids.ndim == 2:
+    _lm_pos_ids = _lm_pos_ids[None, ...].expand(4, _lm_pos_ids.shape[0], -1)
+
+if _lm_pos_ids.ndim == 3 and _lm_pos_ids.shape[0] == 4:
+    _lm_text_pos_ids = _lm_pos_ids[0]
+    _lm_pos_ids_rot = _lm_pos_ids[1:]
+else:
+    _lm_text_pos_ids = None
+    _lm_pos_ids_rot = _lm_pos_ids
+
+_lm_attn_mask = create_causal_mask(
+    config=_lm.config,
+    inputs_embeds=_inputs_embeds_lm,
+    attention_mask=inputs.attention_mask,
+    cache_position=_lm_cache_pos,
+    past_key_values=_past_kv,
+    position_ids=_lm_text_pos_ids,
+)
+
+_hidden_lm = _inputs_embeds_lm
+_lm_pos_emb = _lm.rotary_emb(_hidden_lm, _lm_pos_ids_rot)
+
+_LM_TRACE_ALL_LAYERS = True  # ``True`` → print every layer; ``False`` → first / last + deepstack only
+_LM_TRACE_EVERY = 1  # when ``_LM_TRACE_ALL_LAYERS``, print every N-th layer (1 = all)
+_LM_STORE_HIDDEN_IN_TRACE = False  # ``True`` → each trace entry gets ``hidden_states`` on CPU (large)
+_lm_trace: list[dict] = []
+_n_lm_layers = len(_lm.layers)
 
 with torch.inference_mode():
-    backbone_out = model.model(**_model_kw)
+    for _layer_idx, _decoder_layer in enumerate(_lm.layers):
+        _hidden_lm = _decoder_layer(
+            _hidden_lm,
+            attention_mask=_lm_attn_mask,
+            position_ids=_lm_text_pos_ids,
+            past_key_values=_past_kv,
+            cache_position=_lm_cache_pos,
+            position_embeddings=_lm_pos_emb,
+        )
+        _after_deep = False
+        if _deepstack_visual_embeds is not None and _layer_idx in range(len(_deepstack_visual_embeds)):
+            _hidden_lm = _lm._deepstack_process(
+                _hidden_lm,
+                _visual_pos_masks,
+                _deepstack_visual_embeds[_layer_idx],
+            )
+            _after_deep = True
 
+        _do_print = _LM_TRACE_ALL_LAYERS and (_layer_idx % _LM_TRACE_EVERY == 0 or _layer_idx == _n_lm_layers - 1)
+        if not _LM_TRACE_ALL_LAYERS:
+            _do_print = _layer_idx < 2 or _layer_idx == _n_lm_layers - 1 or _after_deep
+        if _do_print:
+            _h = _hidden_lm
+            print(
+                f"  layer {_layer_idx:>3} | shape {tuple(_h.shape)} | "
+                f"rms {_h.float().pow(2).mean().sqrt().item():.4f} | "
+                f"last_tok max|h| {_h[0, -1].abs().max().item():.4f}"
+                + (" | +deepstack" if _after_deep else ""),
+            )
+
+        _trace_entry = {
+            "layer": _layer_idx,
+            "after_deepstack": _after_deep,
+            "shape": tuple(_hidden_lm.shape),
+            "rms": float(_hidden_lm.float().pow(2).mean().sqrt().item()),
+            "last_tok_absmax": float(_hidden_lm[0, -1].abs().max().item()),
+        }
+        if _LM_STORE_HIDDEN_IN_TRACE:
+            _trace_entry["hidden_states"] = _hidden_lm.detach().float().cpu()
+        _lm_trace.append(_trace_entry)
+
+    _hidden_lm = _lm.norm(_hidden_lm)
+
+print("post-norm: ", tuple(_hidden_lm.shape), _hidden_lm.dtype, end="")
+print(
+    f" | rms {_hidden_lm.float().pow(2).mean().sqrt().item():.4f}",
+)
+
+backbone_out = BaseModelOutputWithPast(last_hidden_state=_hidden_lm, past_key_values=_past_kv)
 _hidden = backbone_out.last_hidden_state
-print("backbone last_hidden_state:", tuple(_hidden.shape), _hidden.dtype)
+print("language_model last_hidden_state:", tuple(_hidden.shape), _hidden.dtype)
+print("len(_lm_trace) == n_layers:", len(_lm_trace), "==", _n_lm_layers)
 
 # %% Step: LM head + one-token logits
 
 # ForConditionalGeneration.forward ~1537–1541: logits = lm_head(hidden_states[:, slice])
 with torch.inference_mode():
     _logits = model.lm_head(_hidden[:, -1:, :])
-_top = _logits[0, -1].float().topk(5)
+_logvec = _logits[0, -1].float()
+_top = _logvec.topk(5)
+_probs = torch.softmax(_logvec, dim=-1)
 _tok = processor.tokenizer
 for rank, (val, idx) in enumerate(zip(_top.values.tolist(), _top.indices.tolist()), start=1):
     piece = _tok.decode([idx], skip_special_tokens=False)
-    print(f"top{rank} id={idx} logit={val:.2f} piece={piece!r}")
+    p = _probs[idx].item()
+    print(f"top{rank} id={idx} logit={val:.2f} prob={p:.6f} piece={piece!r}")
 
 # %% Generate + HTML report
 
@@ -253,8 +428,8 @@ _report = (
     f'<p style="margin:0 0 0.5em 0"><img src="{_img}" alt="MMStar" '
     f'style="max-width:100%;max-height:min(360px,50vh);height:auto;'
     f'border:1px solid #555;border-radius:4px;display:block"/></p>'
-    f"<p><b>Question</b></p>"
-    f'<p style="margin:0.35em 0 0.75em;white-space:pre-wrap">{html.escape(question)}</p>'
+    f"<p><b>Prompt (Qwen3-VL MCQ mixin)</b></p>"
+    f'<p style="margin:0.35em 0 0.75em;white-space:pre-wrap">{html.escape(user_text)}</p>'
     f"<p><b>Model</b> {html.escape(out)}</p>"
     f"<p><b>Gold</b> {html.escape(gold)}</p>"
     f"</div>"
@@ -308,47 +483,3 @@ if n_visual + n_text + n_merger + n_lm_head_total != n_total:
 
 _children = list(_core.named_children())
 print("model.model top-level children:", [k for k, _ in _children])
-
-# %% Qwen3-8B text-only: load
-
-TEXT_ONLY_MODEL_ID = "Qwen/Qwen3-8B"
-
-qwen3_8b_text = AutoModelForCausalLM.from_pretrained(
-    TEXT_ONLY_MODEL_ID,
-    dtype="auto" if DEVICE.type == "cuda" else torch.float32,
-    device_map="auto" if DEVICE.type == "cuda" else None,
-)
-if DEVICE.type != "cuda":
-    qwen3_8b_text = qwen3_8b_text.to(DEVICE)
-
-# %% Compare Qwen3-VL-8B-Instruct and Qwen3-8B (text-only)
-
-_n_vl = sum(p.numel() for p in model.parameters())
-_n_8b = sum(p.numel() for p in qwen3_8b_text.parameters())
-
-print("Loaded for comparison:", TEXT_ONLY_MODEL_ID)
-print("(Two ~8B checkpoints in memory can be tight; skip this cell or reset kernel if OOM.)")
-print()
-
-if hasattr(qwen3_8b_text, "model") and hasattr(qwen3_8b_text, "lm_head"):
-    _ids_lm = {id(p) for p in qwen3_8b_text.model.parameters()}
-    _n_trunk = n_params(qwen3_8b_text.model)
-    _n_lm = n_params(qwen3_8b_text.lm_head)
-    _n_lm_u = sum(
-        p.numel() for p in qwen3_8b_text.lm_head.parameters() if id(p) not in _ids_lm
-    )
-    print("Qwen3-8B (AutoModelForCausalLM) — breakdown")
-    print(f"  trunk (.model):                    {_n_trunk:>14,}")
-    print(f"  lm_head (all tensors):             {_n_lm:>14,}")
-    if _n_lm_u != _n_lm:
-        print(
-            "    └─ not shared with .model:",
-            f"{_n_lm_u:>10,}",
-        )
-
-print(f"  deduplicated total:                {_n_8b:>14,}")
-print()
-print("Side-by-side (storage-dedup totals)")
-print(f"  Qwen3-VL-8B-Instruct ({MODEL_ID}): {_n_vl:>14,}")
-print(f"  Qwen3-8B ({TEXT_ONLY_MODEL_ID}):     {_n_8b:>14,}")
-print(f"  Δ (VL − text-only):                 {_n_vl - _n_8b:>14,}")

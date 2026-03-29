@@ -484,6 +484,18 @@ const cellStdoutPlainText = new Set<number>();
 
 const STONESOUP_RENDER_FIRST_LINE = /^\s*#\s*stonesoup:render\s*=\s*(auto|text|html|markdown|md)\s*$/i;
 
+/** Collapse ``\r`` per line like a TTY so tqdm/progress bars do not accumulate in streamed logs. */
+function foldCarriageReturns(s: string): string {
+  if (!s.includes("\r")) return s;
+  return s
+    .split("\n")
+    .map((line) => {
+      const i = line.lastIndexOf("\r");
+      return i === -1 ? line : line.slice(i + 1);
+    })
+    .join("\n");
+}
+
 /** Strip leading ``# stonesoup:render=…`` line; ``md`` → markdown, ``auto``/``text``/omitted → plain stdout (no guessing). */
 function peelStonesoupRenderHint(raw: string): { body: string; renderHint: StdoutKind | null } {
   const s = raw.replace(/^\ufeff/, "");
@@ -767,6 +779,57 @@ function savePipeline() {
   }
 }
 
+/** After moving one pipeline index, ``perm[newIdx]`` = old pipeline index now at ``newIdx``. */
+function pipelineStripPermAfterMove(from: number, to: number, n: number): number[] | null {
+  if (!Number.isInteger(from) || !Number.isInteger(to) || n <= 0) return null;
+  if (from < 0 || from >= n || to < 0 || to > n) return null;
+  const order = Array.from({ length: n }, (_, i) => i);
+  const [x] = order.splice(from, 1);
+  const insertAt = from < to ? to - 1 : to;
+  order.splice(insertAt, 0, x);
+  return order;
+}
+
+function remapLoopExpandedIndices(perm: number[]) {
+  const next = new Set<string>();
+  for (const key of loopConfigExpanded) {
+    const m = /^(\d+):(.*)$/.exec(key);
+    if (!m) continue;
+    const oldP = Number(m[1]);
+    const pathJson = m[2]!;
+    if (!Number.isInteger(oldP)) continue;
+    const newP = perm.indexOf(oldP);
+    if (newP < 0) continue;
+    next.add(loopExpandedKey(newP, pathJson));
+  }
+  loopConfigExpanded.clear();
+  for (const k of next) loopConfigExpanded.add(k);
+}
+
+function remapActivePipelineAbortForStripReorder(perm: number[]) {
+  const next = new Map<number, AbortController>();
+  for (const [oldP, ac] of activePipelineAbortControllers) {
+    const newP = perm.indexOf(oldP);
+    if (newP >= 0) next.set(newP, ac);
+  }
+  activePipelineAbortControllers.clear();
+  for (const [k, v] of next) activePipelineAbortControllers.set(k, v);
+}
+
+/** Move pipeline row ``from`` to sit at slot ``to`` (0 = top, ``n`` = after last). */
+function movePipelineStrip(from: number, to: number): boolean {
+  const n = pipelines.length;
+  if (n <= 1) return false;
+  const perm = pipelineStripPermAfterMove(from, to, n);
+  if (!perm) return false;
+  const [row] = pipelines.splice(from, 1);
+  const insertAt = from < to ? to - 1 : to;
+  pipelines.splice(insertAt, 0, row);
+  remapLoopExpandedIndices(perm);
+  remapActivePipelineAbortForStripReorder(perm);
+  return true;
+}
+
 /** Toast duration; new messages reset the timer. */
 const STATUS_TOAST_MS = 4000;
 let statusHideTimer = 0;
@@ -852,7 +915,7 @@ function prepareCellStreamUi(index: number) {
 }
 
 function appendCellStreamChunk(index: number, text: string) {
-  const next = (cellStreamBufferByIndex.get(index) ?? "") + text;
+  const next = foldCarriageReturns((cellStreamBufferByIndex.get(index) ?? "") + text);
   cellStreamBufferByIndex.set(index, next);
   const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
   if (outEl) outEl.textContent = next;
@@ -1269,7 +1332,9 @@ const DND_PAYLOAD = "text/plain";
 type DndPayload =
   | { kind: "canvas"; cellIndex: number }
   /** Cell or loop step at this path in the pipeline tree */
-  | { kind: "move"; fromPath: number[]; fromPipeline: number };
+  | { kind: "move"; fromPath: number[]; fromPipeline: number }
+  /** Reorder entire pipeline strip (row) */
+  | { kind: "reorder_strip"; fromPipeline: number };
 
 function loopRunCount(step: PipelineStep & { kind: "loop" }): number {
   const n = step.iterations?.length ?? 0;
@@ -1572,28 +1637,30 @@ function renderPipelineBar() {
     }
   };
 
-  for (let pIdx = 0; pIdx < pipelines.length; pIdx++) {
+  const nStrips = pipelines.length;
+  for (let slot = 0; slot <= nStrips; slot++) {
+    const stripZone = document.createElement("div");
+    stripZone.className = "pipeline-strip-drop-zone";
+    stripZone.dataset.stripReorderAt = String(slot);
+    stripZone.title = "Drop here to place this pipeline row";
+    stack.appendChild(stripZone);
+
+    if (slot >= nStrips) break;
+
+    const pIdx = slot;
     const program = pipelines[pIdx]!;
     const block = document.createElement("div");
     block.className = "pipeline-block";
 
-    if (pipelines.length > 1) {
-      const toolbar = document.createElement("div");
-      toolbar.className = "pipeline-block-toolbar";
-      const bStripRm = document.createElement("button");
-      bStripRm.type = "button";
-      bStripRm.className = "btn-icon pipeline-strip-remove";
-      bStripRm.dataset.removePipelineStrip = String(pIdx);
-      bStripRm.title = "Remove this pipeline";
-      bStripRm.setAttribute("aria-label", "Remove pipeline");
-      bStripRm.textContent = "−";
-      toolbar.appendChild(bStripRm);
-      block.appendChild(toolbar);
-    }
-
     const shell = document.createElement("div");
     shell.className = "pipeline-chips";
     shell.dataset.pipelineIndex = String(pIdx);
+    if (pipelines.length > 1) {
+      shell.classList.add("pipeline-chips--reorderable");
+      shell.draggable = true;
+      shell.dataset.pipelineStripFrom = String(pIdx);
+      shell.title = "Drag from an empty area of this row to reorder pipelines";
+    }
 
     const flowScroll = document.createElement("div");
     flowScroll.className = "pipeline-chips-flow-scroll";
@@ -1640,25 +1707,40 @@ function renderPipelineBar() {
 
     shell.append(flowScroll, actions);
     block.appendChild(shell);
+
+    const stripTools = document.createElement("div");
+    stripTools.className = "pipeline-block-strip-tools";
+    if (pipelines.length > 1) {
+      const bStripRm = document.createElement("button");
+      bStripRm.type = "button";
+      bStripRm.className = "btn-icon pipeline-strip-remove";
+      bStripRm.dataset.removePipelineStrip = String(pIdx);
+      bStripRm.draggable = false;
+      bStripRm.title = "Remove this pipeline";
+      bStripRm.setAttribute("aria-label", "Remove pipeline");
+      bStripRm.textContent = "−";
+      stripTools.appendChild(bStripRm);
+    }
+    if (pIdx === pipelines.length - 1) {
+      const bAdd = document.createElement("button");
+      bAdd.type = "button";
+      bAdd.className = "btn-icon pipeline-add-more";
+      bAdd.draggable = false;
+      bAdd.title = "Add another pipeline";
+      bAdd.setAttribute("aria-label", "Add pipeline");
+      bAdd.textContent = "＋";
+      bAdd.addEventListener("click", () => {
+        pipelines.push([]);
+        savePipeline();
+        renderPipelineBar();
+        highlightPipelineCells();
+      });
+      stripTools.appendChild(bAdd);
+    }
+    if (stripTools.childElementCount > 0) block.appendChild(stripTools);
+
     stack.appendChild(block);
   }
-
-  const addWrap = document.createElement("div");
-  addWrap.className = "pipeline-add-strip";
-  const bAdd = document.createElement("button");
-  bAdd.type = "button";
-  bAdd.className = "btn-icon pipeline-add-more";
-  bAdd.title = "Add another pipeline";
-  bAdd.setAttribute("aria-label", "Add pipeline");
-  bAdd.textContent = "＋";
-  bAdd.addEventListener("click", () => {
-    pipelines.push([]);
-    savePipeline();
-    renderPipelineBar();
-    highlightPipelineCells();
-  });
-  addWrap.appendChild(bAdd);
-  stack.appendChild(addWrap);
 
   stack.querySelectorAll<HTMLButtonElement>("[data-remove-pipeline-strip]").forEach((btn) => {
     btn.addEventListener("click", (ev) => {
@@ -2442,10 +2524,12 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || r.statusText);
-    const peeled = peelStonesoupRenderHint(typeof j.stdout === "string" ? j.stdout : "");
+    const peeled = peelStonesoupRenderHint(
+      foldCarriageReturns(typeof j.stdout === "string" ? j.stdout : ""),
+    );
     const nextOut: CellOutput = {
       stdout: peeled.body,
-      stderr: j.stderr || "",
+      stderr: foldCarriageReturns(typeof j.stderr === "string" ? j.stderr : ""),
       ok: j.ok,
     };
     if (peeled.renderHint != null) nextOut.renderHint = peeled.renderHint;
@@ -2682,9 +2766,11 @@ window.addEventListener("resize", () => {
 });
 
 function clearPipelineDropHighlights() {
-  document.querySelectorAll(".pipeline-drop-zone.is-drag-over").forEach((el) => {
-    el.classList.remove("is-drag-over");
-  });
+  document.querySelectorAll(".pipeline-drop-zone.is-drag-over, .pipeline-strip-drop-zone.is-drag-over").forEach(
+    (el) => {
+      el.classList.remove("is-drag-over");
+    },
+  );
 }
 
 /**
@@ -2749,6 +2835,33 @@ function hitTestPipelineDropZone(clientX: number, clientY: number): HTMLElement 
   return best;
 }
 
+/** Drop target for reordering whole pipeline rows (between strips). */
+function hitTestStripReorderZone(clientX: number, clientY: number): HTMLElement | null {
+  const stack = document.getElementById("pipelines-stack");
+  if (!stack) return null;
+  const zones = [...stack.querySelectorAll<HTMLElement>(".pipeline-strip-drop-zone")];
+  if (zones.length === 0) return null;
+  const pad = 12;
+  let best: HTMLElement | null = null;
+  let bestArea = Infinity;
+  for (const z of zones) {
+    const r = z.getBoundingClientRect();
+    if (
+      clientX >= r.left - pad &&
+      clientX <= r.right + pad &&
+      clientY >= r.top - pad &&
+      clientY <= r.bottom + pad
+    ) {
+      const area = Math.max(1, r.width) * Math.max(1, r.height);
+      if (area < bestArea) {
+        bestArea = area;
+        best = z;
+      }
+    }
+  }
+  return best;
+}
+
 function parseDndPayload(dt: DataTransfer): DndPayload | null {
   try {
     const raw = dt.getData(DND_PAYLOAD);
@@ -2756,6 +2869,12 @@ function parseDndPayload(dt: DataTransfer): DndPayload | null {
     const x = JSON.parse(raw) as DndPayload;
     if (x.kind === "canvas" && typeof x.cellIndex === "number" && Number.isInteger(x.cellIndex))
       return x;
+    if (x.kind === "reorder_strip") {
+      const rs = x as { kind: string; fromPipeline?: number };
+      if (typeof rs.fromPipeline === "number" && Number.isInteger(rs.fromPipeline)) {
+        return { kind: "reorder_strip", fromPipeline: rs.fromPipeline };
+      }
+    }
     if (x.kind === "move" && Array.isArray(x.fromPath)) {
       const mp = x as { fromPath: number[]; fromPipeline?: number };
       const fromPipeline =
@@ -3077,6 +3196,23 @@ function bindPipelineDnD() {
         activePipelineDnd = payload;
         e.dataTransfer!.setData(DND_PAYLOAD, JSON.stringify(payload));
         e.dataTransfer!.effectAllowed = "move";
+        return;
+      }
+      const stripShell = t.closest<HTMLElement>("[data-pipeline-strip-from]");
+      if (stripShell && pipelineRow && pipelineRow.contains(stripShell)) {
+        const blocked = t.closest<HTMLElement>(
+          "button, a, input, textarea, select, [data-pipeline-chip-drag], [data-pipeline-loop-drag], .pipeline-drop-zone",
+        );
+        if (blocked && stripShell.contains(blocked)) {
+          e.preventDefault();
+          return;
+        }
+        const fromPipeline = Number(stripShell.dataset.pipelineStripFrom);
+        if (!Number.isInteger(fromPipeline) || pipelines.length <= 1) return;
+        const payload: DndPayload = { kind: "reorder_strip", fromPipeline };
+        activePipelineDnd = payload;
+        e.dataTransfer!.setData(DND_PAYLOAD, JSON.stringify(payload));
+        e.dataTransfer!.effectAllowed = "move";
       }
     },
     true,
@@ -3099,8 +3235,14 @@ function bindPipelineDnD() {
     const dt = e.dataTransfer;
     if (!dt) return;
     e.preventDefault();
-    dt.dropEffect = activePipelineDnd.kind === "move" ? "move" : "copy";
     clearPipelineDropHighlights();
+    if (activePipelineDnd.kind === "reorder_strip") {
+      dt.dropEffect = "move";
+      const sz = hitTestStripReorderZone(e.clientX, e.clientY);
+      if (sz) sz.classList.add("is-drag-over");
+      return;
+    }
+    dt.dropEffect = activePipelineDnd.kind === "move" ? "move" : "copy";
     const z = hitTestPipelineDropZone(e.clientX, e.clientY);
     if (z) z.classList.add("is-drag-over");
   });
@@ -3111,6 +3253,20 @@ function bindPipelineDnD() {
     clearPipelineDropHighlights();
     const payload = parseDndPayload(e.dataTransfer!);
     if (!payload) return;
+
+    if (payload.kind === "reorder_strip") {
+      const sz = hitTestStripReorderZone(e.clientX, e.clientY);
+      if (!sz || !pipelineRow.contains(sz)) return;
+      const to = Number(sz.dataset.stripReorderAt);
+      if (!Number.isInteger(to) || to < 0 || to > pipelines.length) return;
+      if (!movePipelineStrip(payload.fromPipeline, to)) return;
+      savePipeline();
+      renderPipelineBar();
+      highlightPipelineCells();
+      setStatus("Pipeline order updated");
+      return;
+    }
+
     const z = hitTestPipelineDropZone(e.clientX, e.clientY);
     if (!z || !pipelineRow.contains(z)) return;
     const loopRaw = z.dataset.dropLoop ?? "";
