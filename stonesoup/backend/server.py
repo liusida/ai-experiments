@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from typing import Any
 
 from pydantic import BaseModel
@@ -308,6 +309,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_data_images_dir = stonesoup_root() / "data" / "images"
+if _data_images_dir.is_dir():
+    app.mount(
+        "/data/image",
+        StaticFiles(directory=str(_data_images_dir.resolve()), check_dir=True),
+        name="data_images",
+    )
+else:
+    logger.warning("Static data/images directory not found; skipping /data/image mount: %s", _data_images_dir)
 
 
 @app.on_event("startup")
