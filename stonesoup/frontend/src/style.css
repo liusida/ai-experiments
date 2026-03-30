@@ -807,6 +807,38 @@ button.btn-icon svg {
   flex-shrink: 0;
 }
 
+.cell-action-icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Icon-only variants: square touch targets in the cell toolbar */
+.cell-head-actions .btn-icon-cell {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.cell-head-actions .btn-chain.btn-icon-cell {
+  font-size: 0;
+}
+
+a.toggle.cell-cursor-link.cell-cursor-link--icon,
+span.cell-cursor-link--disabled.cell-cursor-link--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  line-height: 0;
+  box-sizing: border-box;
+}
+
 .workspace {
   position: relative;
   display: flex;
@@ -1282,6 +1314,24 @@ button.btn-icon svg {
   margin-top: 4px;
 }
 
+.out-label-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.out-duration {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  color: var(--vs-fg-dim);
+  white-space: nowrap;
+}
+
 .out-label-row .out-label {
   margin-top: 0;
 }
@@ -1405,6 +1455,11 @@ a.toggle.cell-cursor-link:hover {
   border-radius: 3px;
   padding: 2px 6px;
   font-size: 11px;
+}
+
+.cell-cursor-link--disabled.cell-cursor-link--icon {
+  padding: 4px;
+  font-size: 0;
 }
 
 .ws-dot {

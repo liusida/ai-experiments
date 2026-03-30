@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import queue
+import time
 from collections import OrderedDict, defaultdict
 from pathlib import Path
 
@@ -427,9 +428,10 @@ async def api_run(body: RunBody) -> dict:
         if kernel is None:
             raise HTTPException(status_code=400, detail="Watched file is not available")
 
-        def worker() -> tuple[str, str, bool]:
+        def worker() -> tuple[str, str, bool, float]:
             try:
-                return kernel.run_cell(
+                t0 = time.perf_counter()
+                stdout, stderr, ok = kernel.run_cell(
                     source,
                     inject=inject,
                     source_path=source_path,
@@ -437,6 +439,8 @@ async def api_run(body: RunBody) -> dict:
                     on_stdout_chunk=on_stdout,
                     on_stderr_chunk=on_stderr,
                 )
+                elapsed_s = time.perf_counter() - t0
+                return stdout, stderr, ok, elapsed_s
             finally:
                 chunk_queue.put(None)
 
@@ -458,8 +462,14 @@ async def api_run(body: RunBody) -> dict:
                         "text": text,
                     }
                 )
-            stdout, stderr, ok = await fut
-            return {"ok": ok, "cell_index": idx, "stdout": stdout, "stderr": stderr}
+            stdout, stderr, ok, elapsed_s = await fut
+            return {
+                "ok": ok,
+                "cell_index": idx,
+                "stdout": stdout,
+                "stderr": stderr,
+                "duration_sec": elapsed_s,
+            }
         finally:
             await _broadcast_ws_json({"type": "run_end", "cell_index": idx, "ok": ok})
 

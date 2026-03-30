@@ -63,6 +63,11 @@ function escapeHtmlAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
+/** Cell toolbar icons (``currentColor``). ``py`` badge for the Cursor deeplink (Python source); run is play inside one “cell” frame. */
+const CELL_ICON_PYTHON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.35"/><text x="12" y="12" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="10" font-weight="800" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">py</text></svg>`;
+const CELL_ICON_ADD = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
+const CELL_ICON_RUN_CELL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="currentColor" d="M10.5 9.5 15.5 12l-5 2.5v-5z"/></svg>`;
+
 /** Manual resize / saved layout: must leave room below `.cell-head` for output */
 const CELL_LAYOUT_MIN_W = 220;
 const CELL_LAYOUT_MIN_H = 200;
@@ -476,7 +481,14 @@ const cellRunInputDraft = new Map<number, string>();
 type StdoutKind = "text" | "html" | "markdown";
 
 /** Kernel result for one cell run; ``renderHint`` from optional first stdout line ``# stonesoup:render=…`` (stripped from ``stdout``). */
-type CellOutput = { stdout: string; stderr: string; ok: boolean; renderHint?: StdoutKind | null };
+type CellOutput = {
+  stdout: string;
+  stderr: string;
+  ok: boolean;
+  renderHint?: StdoutKind | null;
+  /** Wall time for ``kernel.run_cell`` only (seconds), from the server. */
+  durationSec?: number;
+};
 const outputs = new Map<number, CellOutput>();
 
 /** When set, stdout is shown escaped (toggle chip); only meaningful for HTML/MD preset outputs. */
@@ -494,6 +506,14 @@ function foldCarriageReturns(s: string): string {
       return i === -1 ? line : line.slice(i + 1);
     })
     .join("\n");
+}
+
+/** Format server-reported cell duration for the output header. */
+function formatDurationSec(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "";
+  if (sec < 1) return `${Math.round(sec * 1000)} ms`;
+  if (sec < 10) return `${sec.toFixed(2)} s`;
+  return `${sec.toFixed(1)} s`;
 }
 
 /** Strip leading ``# stonesoup:render=…`` line; ``md`` → markdown, ``auto``/``text``/omitted → plain stdout (no guessing). */
@@ -2173,8 +2193,8 @@ function renderCells(cells: Cell[], path: string | null) {
       : "";
     const codeControl =
       cursorHref !== ""
-        ? `<a class="toggle cell-cursor-link" draggable="false" href="${escapeHtmlAttr(cursorHref)}" title="Open this cell in Cursor (deeplink)" rel="noopener">Code</a>`
-        : `<span class="toggle cell-cursor-link cell-cursor-link--disabled" title="Watch a file to open in Cursor">Code</span>`;
+        ? `<a class="toggle cell-cursor-link cell-cursor-link--icon" draggable="false" href="${escapeHtmlAttr(cursorHref)}" title="Open this cell in Cursor (deeplink)" rel="noopener" aria-label="Open this cell in Cursor">${CELL_ICON_PYTHON}</a>`
+        : `<span class="toggle cell-cursor-link cell-cursor-link--disabled cell-cursor-link--icon" title="Watch a file to open in Cursor" aria-label="Open in Cursor unavailable: watch a file first">${CELL_ICON_PYTHON}</span>`;
     const runInputHtml = c.cell_input
       ? `<input type="text" class="cell-run-input" draggable="false" data-run-input="${c.index}" placeholder="CELL_INPUT" spellcheck="false" title="Injected as CELL_INPUT · Ctrl+Enter or ⌘+Enter to run this cell" aria-label="Cell run input" />`
       : "";
@@ -2188,14 +2208,15 @@ function renderCells(cells: Cell[], path: string | null) {
           </div>
           <div class="cell-head-actions">
             ${codeControl}
-            <button type="button" class="btn-chain" draggable="false" data-pipeline-add="${c.index}" title="Append to pipeline">+ chain</button>
+            <button type="button" class="btn-chain btn-icon-cell" draggable="false" data-pipeline-add="${c.index}" title="Append to pipeline" aria-label="Append to pipeline">${CELL_ICON_ADD}</button>
             ${runInputHtml}
-            <button type="button" class="primary" draggable="false" data-run="${c.index}">Run</button>
+            <button type="button" class="primary btn-icon-cell" draggable="false" data-run="${c.index}" title="Run this cell" aria-label="Run this cell">${CELL_ICON_RUN_CELL}</button>
           </div>
         </div>
         <div class="cell-output-block" data-output-block="${c.index}" style="display:${showOut ? "flex" : "none"}">
           <div class="out-label-row" draggable="false">
             <span class="out-label" draggable="false">Output</span>
+            <div class="out-label-meta" draggable="false"></div>
           </div>
           <div class="out ${prev && !prev.ok ? "err" : prev ? "ok" : "out-pending"}${outRichClass}" draggable="false" data-out="${c.index}" title="Click to copy">${outRendered ? outRendered.html : ""}</div>
         </div>
@@ -2346,8 +2367,36 @@ function syncOutLabelRowForCell(index: number) {
   if (!block) return;
   const row = block.querySelector<HTMLElement>(".out-label-row");
   if (!row) return;
+  let meta = row.querySelector<HTMLElement>(".out-label-meta");
+  if (!meta) {
+    meta = document.createElement("div");
+    meta.className = "out-label-meta";
+    meta.draggable = false;
+    row.appendChild(meta);
+  }
+
+  const running = runningCellIndices.has(index);
+  let durEl = meta.querySelector<HTMLElement>(`[data-out-duration="${index}"]`);
+  if (!durEl) {
+    durEl = document.createElement("span");
+    durEl.className = "out-duration";
+    durEl.draggable = false;
+    durEl.dataset.outDuration = String(index);
+    meta.insertBefore(durEl, meta.firstChild);
+  }
+  const ds = o?.durationSec;
+  if (!running && typeof ds === "number" && Number.isFinite(ds) && ds >= 0) {
+    durEl.textContent = formatDurationSec(ds);
+    durEl.title = `Cell execution time: ${ds.toFixed(4)} s`;
+    durEl.hidden = false;
+  } else {
+    durEl.textContent = "";
+    durEl.removeAttribute("title");
+    durEl.hidden = true;
+  }
+
   const wantChip = Boolean(o && showOutputRichToggleForCell(o));
-  let chip = row.querySelector<HTMLButtonElement>(`[data-out-plain-toggle="${index}"]`);
+  let chip = meta.querySelector<HTMLButtonElement>(`[data-out-plain-toggle="${index}"]`);
   if (!wantChip) {
     chip?.remove();
     return;
@@ -2373,7 +2422,7 @@ function syncOutLabelRowForCell(index: number) {
       else cellStdoutPlainText.add(i);
       refreshCellOutputView(i);
     });
-    row.appendChild(chip);
+    meta.appendChild(chip);
   }
   chip.textContent = outputPlainToggleLabel(preset, asPlain);
   chip.title = outputPlainToggleTitle(preset, asPlain);
@@ -2511,6 +2560,7 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
   /* Match WebSocket run_start order: running flag first so compact/layout never clips live output (tqdm). */
   setCellRunningState(index, true);
   prepareCellStreamUi(index);
+  syncOutLabelRowForCell(index);
   if (btn) btn.disabled = true;
   try {
     const body: Record<string, unknown> = {
@@ -2532,6 +2582,8 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
       stderr: foldCarriageReturns(typeof j.stderr === "string" ? j.stderr : ""),
       ok: j.ok,
     };
+    const rawDur = (j as { duration_sec?: unknown }).duration_sec;
+    if (typeof rawDur === "number" && Number.isFinite(rawDur)) nextOut.durationSec = rawDur;
     if (peeled.renderHint != null) nextOut.renderHint = peeled.renderHint;
     if (presetRichKind(nextOut) === null) cellStdoutPlainText.delete(index);
     outputs.set(index, nextOut);
@@ -2581,6 +2633,7 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
     applyFloatingLayout();
   } finally {
     setCellRunningState(index, false);
+    syncOutLabelRowForCell(index);
     if (btn) btn.disabled = false;
   }
 }
@@ -2728,7 +2781,7 @@ async function runPipeline(pIdx: number) {
   }
   const steps = sanitizeProgram(pipelines[pIdx] ?? [], n);
   if (programIsEmpty(steps)) {
-    setStatus(`Pipeline ${pIdx + 1} is empty — use + chain or drag ↻ Loop below`);
+    setStatus(`Pipeline ${pIdx + 1} is empty — use the add-to-pipeline (+) icon on a cell or drag ↻ Loop below`);
     activePipelineAbortControllers.delete(pIdx);
     syncPipelineAbortButtons();
     if (btn) btn.disabled = false;
