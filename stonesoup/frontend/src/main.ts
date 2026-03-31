@@ -2,6 +2,15 @@ import "./style.css";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
+/** Allow ``stonesoup.show()`` images (served under ``/outputs/``). */
+DOMPurify.addHook("uponSanitizeAttribute", (_node, data) => {
+  if (!data || data.attrName !== "src") return;
+  const v = data.attrValue;
+  if (typeof v === "string" && v.startsWith("/outputs/")) {
+    data.forceKeepAttr = true;
+  }
+});
+
 type Cell = {
   index: number;
   title: string;
@@ -76,6 +85,26 @@ const CELL_LAYOUT_MIN_H = 200;
 const CELLS_PAN_GUTTER_PX = 2400;
 
 const apiBase = import.meta.env.DEV ? "" : "http://127.0.0.1:8765";
+
+/** Read ``Response`` as JSON; if the body is HTML/text (e.g. Vite 502 when :8765 is down), throw a clear error. */
+async function readApiJson(r: Response): Promise<unknown> {
+  const text = await r.text();
+  const t = text.trim();
+  if (!t) {
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText} (empty body)`);
+    return {};
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    const preview = text.length > 280 ? `${text.slice(0, 280)}…` : text;
+    const htmlish = preview.trimStart().startsWith("<");
+    const hint = htmlish
+      ? " Body looks like HTML — is the Stonesoup server running on port 8765? (Dev UI proxies /api there.)"
+      : "";
+    throw new Error(`HTTP ${r.status}: response is not JSON.${hint}\n${preview}`);
+  }
+}
 
 function wsUrl(): string {
   if (import.meta.env.DEV) {
@@ -182,9 +211,7 @@ function scheduleSaveCellLayouts() {
 }
 
 const defaultPath =
-  (urlParams.get("path") || "").trim() ||
-  readWatchPathCookie().trim() ||
-  "experiments/2026-03-23-Embedding/demo.py";
+  (urlParams.get("path") || "").trim() || readWatchPathCookie().trim() || "";
 
 /** List *.py from this repo-relative folder; default `experiments` shows all dated experiment scripts. */
 const scriptPickerDir =
@@ -192,14 +219,26 @@ const scriptPickerDir =
 
 app.innerHTML = `
   <div class="toolbar">
-    <span class="ws-dot" id="ws-dot" title="Live reload: disconnected" aria-label="WebSocket disconnected"></span>
-    <span class="script-picker">
-      <select id="folder-select" title="Experiment folder under list root" aria-label="Folder"></select>
-      <select id="file-select" title="Python file in folder" aria-label="File"></select>
-    </span>
-    <input type="hidden" id="path-input" />
-    <button type="button" class="primary" id="btn-watch">Watch</button>
-    <button type="button" id="btn-reset" title="Restart the Stonesoup backend (fresh process; reclaims memory)">Reset</button>
+    <div class="toolbar-watch">
+      <span class="ws-dot" id="ws-dot" title="Live reload: disconnected" aria-label="WebSocket disconnected"></span>
+      <span class="script-picker">
+        <select id="folder-select" title="Experiment folder under list root" aria-label="Folder"></select>
+        <select id="file-select" title="Python file in folder" aria-label="File"></select>
+      </span>
+      <input type="hidden" id="path-input" />
+      <button type="button" class="primary" id="btn-watch">Watch</button>
+      <button type="button" id="btn-reset" title="Restart the Stonesoup backend (fresh process; reclaims memory)">Reset</button>
+    </div>
+    <div class="toolbar-models" title="Load Hugging Face checkpoints into the watched script kernel (use the repo id in stonesoup.load_model)">
+      <span class="model-repo-combo">
+        <input type="text" id="model-repo-input" class="model-repo-input" list="model-repo-datalist" spellcheck="false" title="Type a repo id or pick from disk cache / recently loaded" aria-label="Hugging Face model repo id" autocomplete="off" />
+        <datalist id="model-repo-datalist"></datalist>
+      </span>
+      <button type="button" class="primary" id="btn-model-load">Load</button>
+      <select id="models-loaded-select" aria-label="Loaded models" title="Select a model to copy its repo id. With one model, choose — then the model again to copy twice."><option value="">—</option></select>
+      <button type="button" id="btn-model-unload-one" title="Unload the selected model from the kernel">Unload</button>
+      <button type="button" id="btn-model-unload-all" title="Unload every model loaded via Stonesoup for this script">All</button>
+    </div>
   </div>
   <div class="pipeline-row" id="pipeline-row">
     <div class="pipeline-aside">
@@ -211,6 +250,16 @@ app.innerHTML = `
   <div class="workspace">
     <div class="cells" id="cells">
       <div class="cells-pan-arena" id="cells-pan-arena"><div class="cells-zoom-wrap" id="cells-zoom-wrap"><div class="cells-canvas" id="cells-canvas"></div></div></div>
+    </div>
+    <div class="stonesoup-console" id="stonesoup-console">
+      <div class="stonesoup-console-panel" id="stonesoup-console-panel">
+        <div class="stonesoup-console-toolbar">
+          <span class="stonesoup-console-title">Console</span>
+          <button type="button" class="btn-icon" id="stonesoup-console-clear" title="Clear log">Clear</button>
+          <button type="button" class="btn-icon" id="stonesoup-console-collapse" title="Hide console">▾</button>
+        </div>
+        <pre class="stonesoup-console-pre" id="stonesoup-console-pre"></pre>
+      </div>
     </div>
     <div class="kernel-vars-dock" id="kernel-vars-dock">
       <div class="kernel-vars-panel" id="kernel-vars-panel">
@@ -229,6 +278,7 @@ app.innerHTML = `
       </div>
       <div class="kernel-vars-dock-bar">
         <button type="button" class="cells-auto-fab" id="btn-cells-auto-layout" title="Discard saved positions and reflow cells into the automatic grid (fixes overlap after output or resize)" aria-label="Automatic cell layout">↻</button>
+        <button type="button" class="cells-auto-fab" id="btn-console-toggle" title="Server log console (stderr/stdout during model load, etc.)" aria-label="Toggle console" aria-expanded="false">&gt;_</button>
         <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show kernel variables (per script)">
           <span class="kernel-vars-chip-icon" aria-hidden="true">{ }</span>
           <span class="kernel-vars-chip-sessions" id="kernel-vars-sessions"></span>
@@ -244,6 +294,12 @@ const fileSelect = app.querySelector<HTMLSelectElement>("#file-select")!;
 const pathInput = app.querySelector<HTMLInputElement>("#path-input")!;
 const btnWatch = app.querySelector<HTMLButtonElement>("#btn-watch")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
+const modelRepoInput = app.querySelector<HTMLInputElement>("#model-repo-input")!;
+const modelRepoDatalist = app.querySelector<HTMLDataListElement>("#model-repo-datalist")!;
+const btnModelLoad = app.querySelector<HTMLButtonElement>("#btn-model-load")!;
+const modelsLoadedSelect = app.querySelector<HTMLSelectElement>("#models-loaded-select")!;
+const btnModelUnloadOne = app.querySelector<HTMLButtonElement>("#btn-model-unload-one")!;
+const btnModelUnloadAll = app.querySelector<HTMLButtonElement>("#btn-model-unload-all")!;
 const statusToastEl = app.querySelector<HTMLDivElement>("#status-toast")!;
 const btnCellsAutoLayout = app.querySelector<HTMLButtonElement>("#btn-cells-auto-layout")!;
 const cellsEl = app.querySelector<HTMLDivElement>("#cells")!;
@@ -263,8 +319,17 @@ const kernelVarsToggle = app.querySelector<HTMLButtonElement>("#kernel-vars-togg
 const kernelVarsCollapse = app.querySelector<HTMLButtonElement>("#kernel-vars-collapse")!;
 const kernelVarsRefresh = app.querySelector<HTMLButtonElement>("#kernel-vars-refresh")!;
 const kernelVarsSessions = app.querySelector<HTMLSpanElement>("#kernel-vars-sessions")!;
+const stonesoupConsoleRoot = app.querySelector<HTMLDivElement>("#stonesoup-console")!;
+const stonesoupConsolePre = app.querySelector<HTMLPreElement>("#stonesoup-console-pre")!;
+const btnConsoleToggle = app.querySelector<HTMLButtonElement>("#btn-console-toggle")!;
+const btnConsoleClear = app.querySelector<HTMLButtonElement>("#stonesoup-console-clear")!;
+const btnConsoleCollapse = app.querySelector<HTMLButtonElement>("#stonesoup-console-collapse")!;
 
 const KERNEL_VARS_EXPANDED_KEY = "stonesoup_kernel_vars_expanded";
+const STONESOUP_CONSOLE_EXPANDED_KEY = "stonesoup_console_expanded";
+/** Cap retained server log text so the DOM stays bounded. */
+const CONSOLE_BUFFER_MAX = 200 * 1024;
+let appLogBuffer = "";
 
 function resetLoopPaletteSlotPosition(el: HTMLElement) {
   el.classList.remove("loop-palette--dragging");
@@ -299,7 +364,8 @@ cellsEl.addEventListener("click", async (e) => {
 
 pathInput.value = defaultPath;
 
-type ScriptFileEntry = { rel: string; label: string };
+type ScriptFileEntry = { rel: string; label: string; mtime: number };
+type LoadedModelInfo = { name: string; repo_id: string };
 
 /** Sentinel: ``*.py`` directly under the list root (group key; not a real folder name). */
 const SCRIPT_PICKER_ROOT_FOLDER = "__ss_root__";
@@ -311,15 +377,199 @@ function normalizeRelPath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+/** One or more HF ``repo_id`` strings; comma or newline separated. No ``name=repo`` aliases. */
+function parseHfRepoIds(raw: string): { repo_id: string }[] {
+  const items: { repo_id: string }[] = [];
+  const seen = new Set<string>();
+  const parts = raw
+    .split(/\r?\n/)
+    .flatMap((line) => line.split(","))
+    .map((part) => part.trim())
+    .filter(Boolean);
+  for (const part of parts) {
+    if (part.includes("=")) {
+      throw new Error(
+        "Use Hugging Face repo ids only (e.g. Qwen/Qwen3-VL-8B-Instruct), not name=repo.",
+      );
+    }
+    if (seen.has(part)) continue;
+    seen.add(part);
+    items.push({ repo_id: part });
+  }
+  return items;
+}
+
+const MODEL_REPO_RECENT_KEY = "stonesoup_hf_repo_recent";
+const MODEL_REPO_RECENT_MAX = 30;
+
+function readRecentHfRepoIds(): string[] {
+  try {
+    const raw = localStorage.getItem(MODEL_REPO_RECENT_KEY);
+    if (!raw) return [];
+    const a = JSON.parse(raw) as unknown;
+    if (!Array.isArray(a)) return [];
+    return a
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      .map((x) => x.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function rememberHfRepoIdsLoaded(repoIds: string[]) {
+  if (!repoIds.length) return;
+  const prev = readRecentHfRepoIds();
+  const next = [
+    ...repoIds.map((r) => r.trim()).filter(Boolean),
+    ...prev,
+  ];
+  const seen = new Set<string>();
+  const dedup: string[] = [];
+  for (const id of next) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    dedup.push(id);
+    if (dedup.length >= MODEL_REPO_RECENT_MAX) break;
+  }
+  localStorage.setItem(
+    MODEL_REPO_RECENT_KEY,
+    JSON.stringify(dedup.slice(0, MODEL_REPO_RECENT_MAX)),
+  );
+}
+
+function mergeModelRepoSuggestions(cached: string[], recent: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of recent) {
+    const t = raw.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  for (const raw of cached) {
+    const t = raw.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+function fillModelRepoDatalist(repoIds: string[]) {
+  modelRepoDatalist.replaceChildren();
+  for (const id of repoIds) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    modelRepoDatalist.appendChild(opt);
+  }
+}
+
+async function refreshModelRepoSuggestions() {
+  const recent = readRecentHfRepoIds();
+  let cached: string[] = [];
+  try {
+    const r = await fetch(`${apiBase}/api/models/hf-cache`);
+    const j = (await readApiJson(r)) as { repo_ids?: string[]; detail?: string };
+    if (r.ok && Array.isArray(j.repo_ids)) {
+      cached = j.repo_ids.filter(
+        (x): x is string => typeof x === "string" && x.trim().length > 0,
+      );
+    }
+  } catch {
+    /* ignore */
+  }
+  fillModelRepoDatalist(mergeModelRepoSuggestions(cached, recent));
+}
+
+function populateModelsLoadedSelect(loaded: LoadedModelInfo[]) {
+  modelsLoadedSelect.replaceChildren();
+  if (!loaded.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No models loaded";
+    modelsLoadedSelect.appendChild(opt);
+    modelsLoadedSelect.disabled = true;
+    btnModelUnloadOne.disabled = true;
+    btnModelUnloadAll.disabled = true;
+    return;
+  }
+  modelsLoadedSelect.disabled = false;
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "—";
+  modelsLoadedSelect.appendChild(placeholder);
+  for (const item of loaded) {
+    const opt = document.createElement("option");
+    opt.value = item.name;
+    opt.textContent = item.repo_id;
+    opt.title = `Kernel variable ${item.name} · ${item.repo_id}`;
+    modelsLoadedSelect.appendChild(opt);
+  }
+  modelsLoadedSelect.selectedIndex = 0;
+  btnModelUnloadOne.disabled = false;
+  btnModelUnloadAll.disabled = false;
+}
+
+/** Copy the selected loaded model's Hugging Face ``repo_id`` (for ``stonesoup.load_model``). */
+function copyLoadedModelRepoIdToClipboard() {
+  const sel = modelsLoadedSelect.selectedOptions[0];
+  if (!sel || !sel.value) return;
+  const repoId = sel.textContent?.trim() ?? "";
+  if (!repoId || repoId === "No models loaded") return;
+  navigator.clipboard
+    .writeText(repoId)
+    .then(() => setStatus(`Copied ${repoId}`))
+    .catch(() => {
+      modelRepoInput.value = repoId;
+      setStatus("Repo id in loader field (clipboard blocked)");
+    });
+}
+
+function setModelLoaderBusy(busy: boolean) {
+  modelRepoInput.disabled = busy;
+  btnModelLoad.disabled = busy;
+  if (busy) {
+    modelsLoadedSelect.disabled = true;
+    btnModelUnloadOne.disabled = true;
+    btnModelUnloadAll.disabled = true;
+  }
+}
+
+async function fetchLoadedModels(): Promise<LoadedModelInfo[]> {
+  try {
+    const r = await fetch(`${apiBase}/api/models`);
+    const j = (await readApiJson(r)) as { loaded?: LoadedModelInfo[]; detail?: string };
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    const loaded = Array.isArray(j.loaded)
+      ? j.loaded.filter(
+          (item): item is LoadedModelInfo =>
+            !!item &&
+            typeof item === "object" &&
+            typeof item.name === "string" &&
+            typeof item.repo_id === "string",
+        )
+      : [];
+    populateModelsLoadedSelect(loaded);
+    return loaded;
+  } catch {
+    populateModelsLoadedSelect([]);
+    return [];
+  }
+}
+
 /**
  * Group ``*.py`` paths by the first directory under ``root`` (posix). Files directly under ``root``
  * use ``SCRIPT_PICKER_ROOT_FOLDER``.
  */
-function groupPyFilesUnderRoot(root: string, files: string[]): Map<string, ScriptFileEntry[]> {
+function groupPyFilesUnderRoot(
+  root: string,
+  rows: { rel: string; mtime: number }[],
+): Map<string, ScriptFileEntry[]> {
   const r = normalizeRelPath(root);
   const groups = new Map<string, ScriptFileEntry[]>();
-  for (const relRaw of files) {
-    const rel = relRaw.replace(/\\/g, "/");
+  for (const row of rows) {
+    const rel = row.rel.replace(/\\/g, "/");
     if (!rel.toLowerCase().endsWith(".py")) continue;
     if (rel === r) continue;
     if (!rel.startsWith(r + "/")) continue;
@@ -329,11 +579,11 @@ function groupPyFilesUnderRoot(root: string, files: string[]): Map<string, Scrip
     const tail = slash === -1 ? rest : rest.slice(slash + 1);
     if (!tail.toLowerCase().endsWith(".py")) continue;
     const list = groups.get(folderKey) ?? [];
-    list.push({ rel, label: tail });
+    list.push({ rel, label: tail, mtime: row.mtime });
     groups.set(folderKey, list);
   }
   for (const list of groups.values()) {
-    list.sort((a, b) => a.label.localeCompare(b.label));
+    list.sort((a, b) => b.mtime - a.mtime || a.label.localeCompare(b.label));
   }
   return groups;
 }
@@ -364,12 +614,39 @@ function pickFolderKeyForPath(pathWanted: string, groups: Map<string, ScriptFile
   return null;
 }
 
-async function fetchPyFilesUnderDir(dir: string): Promise<string[]> {
+async function fetchPyFilesUnderDir(dir: string): Promise<{ rel: string; mtime: number }[]> {
   const params = new URLSearchParams({ dir, recursive: "true" });
   const r = await fetch(`${apiBase}/api/py-files?${params}`);
-  const j = (await r.json()) as { files?: string[] };
+  const j = (await r.json()) as { files?: string[]; mtimes?: number[] };
   if (!r.ok) throw new Error((j as { detail?: string }).detail || r.statusText);
-  return j.files ?? [];
+  const files = j.files ?? [];
+  const mtimes = j.mtimes;
+  if (!mtimes || mtimes.length !== files.length) {
+    return files.map((rel) => ({ rel, mtime: 0 }));
+  }
+  return files.map((rel, i) => ({ rel, mtime: Number(mtimes[i]) || 0 }));
+}
+
+/** The single ``*.py`` with the newest mtime under the list root (tie: smaller ``rel``). */
+function pickGloballyLatestEntry(groups: Map<string, ScriptFileEntry[]>): ScriptFileEntry | null {
+  let best: ScriptFileEntry | null = null;
+  for (const entries of groups.values()) {
+    for (const e of entries) {
+      if (
+        !best ||
+        e.mtime > best.mtime ||
+        (e.mtime === best.mtime && e.rel.localeCompare(best.rel) < 0)
+      ) {
+        best = e;
+      }
+    }
+  }
+  return best;
+}
+
+/** Latest-touched file in this folder (``groupPyFilesUnderRoot`` sorts newest first). */
+function pickLatestFileEntry(entries: ScriptFileEntry[]): ScriptFileEntry | null {
+  return entries.length ? entries[0]! : null;
 }
 
 async function populateScriptPicker() {
@@ -386,8 +663,8 @@ async function populateScriptPicker() {
   fileSelect.disabled = false;
   try {
     let listDir = scriptPickerDir;
-    let files = await fetchPyFilesUnderDir(listDir);
-    scriptPickerGroups = groupPyFilesUnderRoot(listDir, files);
+    let rows = await fetchPyFilesUnderDir(listDir);
+    scriptPickerGroups = groupPyFilesUnderRoot(listDir, rows);
 
     const want = pathInput.value.trim().replace(/\\/g, "/");
     let chosenKey = pickFolderKeyForPath(want, scriptPickerGroups);
@@ -397,9 +674,9 @@ async function populateScriptPicker() {
       want.startsWith("experiments/") &&
       listDir !== "experiments"
     ) {
-      files = await fetchPyFilesUnderDir("experiments");
+      rows = await fetchPyFilesUnderDir("experiments");
       listDir = "experiments";
-      scriptPickerGroups = groupPyFilesUnderRoot("experiments", files);
+      scriptPickerGroups = groupPyFilesUnderRoot("experiments", rows);
       chosenKey = pickFolderKeyForPath(want, scriptPickerGroups);
     }
 
@@ -417,7 +694,10 @@ async function populateScriptPicker() {
     }
 
     if (chosenKey === null && keys.length > 0) {
-      chosenKey = keys[0]!;
+      const latest = pickGloballyLatestEntry(scriptPickerGroups);
+      chosenKey = latest
+        ? pickFolderKeyForPath(latest.rel, scriptPickerGroups)
+        : keys[0]!;
     }
     if (keys.length === 0) {
       folderSelect.disabled = true;
@@ -430,8 +710,9 @@ async function populateScriptPicker() {
       if (match) {
         fileSelect.value = match.rel;
       } else if (entries.length > 0) {
-        fileSelect.value = entries[0]!.rel;
-        pathInput.value = entries[0]!.rel;
+        const pick = pickLatestFileEntry(entries)!;
+        fileSelect.value = pick.rel;
+        pathInput.value = pick.rel;
       }
     }
   } catch {
@@ -450,11 +731,12 @@ folderSelect.addEventListener("change", () => {
   const key = folderSelect.value;
   populateFileOptions(key);
   const entries = scriptPickerGroups.get(key) ?? [];
-  if (entries.length === 0) {
+  const pick = pickLatestFileEntry(entries);
+  if (!pick) {
     return;
   }
-  fileSelect.value = entries[0]!.rel;
-  pathInput.value = entries[0]!.rel;
+  fileSelect.value = pick.rel;
+  pathInput.value = pick.rel;
   void postWatch();
 });
 
@@ -465,7 +747,9 @@ fileSelect.addEventListener("change", () => {
   void postWatch();
 });
 
-void populateScriptPicker();
+void populateScriptPicker().then(() => {
+  void postWatch();
+});
 
 let revision = 0;
 let lastCells: Cell[] = [];
@@ -473,6 +757,8 @@ let lastPath: string | null = null;
 let ws: WebSocket | null = null;
 /** Cell indices whose source changed on disk since last successful run (merged from server + cleared on run). */
 const staleCells = new Set<number>();
+/** Last ``revision`` we applied ``changed_cell_indices`` from (avoids re-flagging stale on every WS ``cells`` resend / reconnect). */
+let lastRevisionStaleMerged = -1;
 
 /** Per-cell run input text; merged into kernel as ``CELL_INPUT`` (survives UI re-render). */
 const cellRunInputDraft = new Map<number, string>();
@@ -971,6 +1257,7 @@ function applyCellsFromServer(
     outputs.clear();
     cellStdoutPlainText.clear();
     staleCells.clear();
+    lastRevisionStaleMerged = -1;
   }
   revision = data.revision;
   const cells = Array.isArray(data.cells) ? data.cells.map(cellFromApiPayload) : [];
@@ -979,10 +1266,17 @@ function applyCellsFromServer(
     pruneStaleCells(cells.length);
   }
   const changed = data.changed_cell_indices;
-  if (Array.isArray(changed)) {
-    for (const x of changed) {
-      const i = Number(x);
-      if (Number.isInteger(i) && i >= 0 && i < cells.length) staleCells.add(i);
+  const revKey =
+    typeof data.revision === "number" && Number.isFinite(data.revision) ? data.revision : Number(data.revision) || 0;
+  /* Apply server ``changed_cell_indices`` only once per new disk revision; resends (WS reconnect / duplicate
+   * broadcast) must not re-add cells the user already cleared by running. */
+  if (revKey > lastRevisionStaleMerged) {
+    lastRevisionStaleMerged = revKey;
+    if (Array.isArray(changed)) {
+      for (const x of changed) {
+        const i = Number(x);
+        if (Number.isInteger(i) && i >= 0 && i < cells.length) staleCells.add(i);
+      }
     }
   }
   try {
@@ -1081,6 +1375,120 @@ async function fetchKernelVars() {
   }
 }
 
+async function loadModelsFromToolbar() {
+  let items: { repo_id: string }[];
+  try {
+    items = parseHfRepoIds(modelRepoInput.value);
+  } catch (err) {
+    setStatus(String(err));
+    return;
+  }
+  if (!items.length) {
+    setStatus("Enter a Hugging Face repo id (or several, comma-separated)");
+    return;
+  }
+  setModelLoaderBusy(true);
+  try {
+    const r = await fetch(`${apiBase}/api/models/load`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    const j = (await readApiJson(r)) as {
+      detail?: string;
+      accepted?: boolean;
+      loaded?: LoadedModelInfo[];
+      loaded_now?: LoadedModelInfo[];
+    };
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    await fetchKernelVars();
+    if (j.accepted) {
+      setStatus(
+        "Loading model in background — see console. Cell runs queue until load finishes.",
+      );
+      void refreshModelRepoSuggestions();
+      modelRepoInput.value = "";
+      return;
+    }
+    if (Array.isArray(j.loaded_now)) {
+      populateModelsLoadedSelect(j.loaded_now);
+    } else {
+      await fetchLoadedModels();
+    }
+    const loadedNow = Array.isArray(j.loaded) ? j.loaded : [];
+    const repos = loadedNow.map((item) => item.repo_id);
+    if (repos.length) {
+      setStatus(`Loaded ${repos.length === 1 ? "" : `${repos.length} models: `}${repos.join(", ")}`);
+      rememberHfRepoIdsLoaded(repos);
+      void refreshModelRepoSuggestions();
+      modelRepoInput.value = "";
+    } else {
+      setStatus("Models loaded");
+    }
+  } catch (err) {
+    setStatus(String(err));
+  } finally {
+    setModelLoaderBusy(false);
+    void fetchLoadedModels();
+  }
+}
+
+async function unloadSelectedModelFromToolbar() {
+  const internal = modelsLoadedSelect.value;
+  if (!internal) {
+    setStatus("Select a loaded model in the list");
+    return;
+  }
+  setModelLoaderBusy(true);
+  try {
+    const r = await fetch(`${apiBase}/api/models/unload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names: [internal] }),
+    });
+    const j = (await readApiJson(r)) as {
+      detail?: string;
+      unloaded?: LoadedModelInfo[];
+      loaded_now?: LoadedModelInfo[];
+    };
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    await fetchKernelVars();
+    const unloaded = Array.isArray(j.unloaded) ? j.unloaded : [];
+    const label = unloaded[0]?.repo_id ?? internal;
+    setStatus(unloaded.length ? `Unloaded ${label}` : "Nothing to unload");
+  } catch (err) {
+    setStatus(String(err));
+  } finally {
+    setModelLoaderBusy(false);
+    void fetchLoadedModels();
+  }
+}
+
+async function unloadAllModelsFromToolbar() {
+  setModelLoaderBusy(true);
+  try {
+    const r = await fetch(`${apiBase}/api/models/unload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names: null }),
+    });
+    const j = (await readApiJson(r)) as {
+      detail?: string;
+      unloaded?: LoadedModelInfo[];
+      loaded_now?: LoadedModelInfo[];
+    };
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    await fetchKernelVars();
+    const unloaded = Array.isArray(j.unloaded) ? j.unloaded.length : 0;
+    setStatus(unloaded ? `Unloaded ${unloaded} model${unloaded === 1 ? "" : "s"}` : "No models were loaded");
+  } catch (err) {
+    setStatus(String(err));
+  } finally {
+    setModelLoaderBusy(false);
+    void fetchLoadedModels();
+  }
+}
+
 function initKernelVarsDock() {
   const open = kernelVarsStartExpanded();
   kernelVarsDock.classList.toggle("collapsed", !open);
@@ -1104,15 +1512,79 @@ kernelVarsCollapse.addEventListener("click", () => {
 
 kernelVarsRefresh.addEventListener("click", () => void fetchKernelVars());
 
+function trimConsoleBuffer(s: string): string {
+  if (s.length <= CONSOLE_BUFFER_MAX) return s;
+  return s.slice(s.length - CONSOLE_BUFFER_MAX);
+}
+
+function renderConsoleBuffer() {
+  stonesoupConsolePre.textContent = appLogBuffer;
+  if (stonesoupConsoleRoot.classList.contains("stonesoup-console--expanded")) {
+    stonesoupConsolePre.scrollTop = stonesoupConsolePre.scrollHeight;
+  }
+}
+
+function appendAppLogChunk(text: string) {
+  if (!text) return;
+  appLogBuffer = trimConsoleBuffer(foldCarriageReturns(appLogBuffer + text));
+  renderConsoleBuffer();
+}
+
+function clearConsoleBuffer() {
+  appLogBuffer = "";
+  stonesoupConsolePre.textContent = "";
+}
+
+function setConsoleExpanded(expanded: boolean) {
+  stonesoupConsoleRoot.classList.toggle("stonesoup-console--expanded", expanded);
+  localStorage.setItem(STONESOUP_CONSOLE_EXPANDED_KEY, expanded ? "1" : "0");
+  btnConsoleToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  if (expanded) {
+    stonesoupConsolePre.scrollTop = stonesoupConsolePre.scrollHeight;
+  }
+}
+
+function initStonesoupConsole() {
+  setConsoleExpanded(localStorage.getItem(STONESOUP_CONSOLE_EXPANDED_KEY) === "1");
+}
+
+btnConsoleToggle.addEventListener("click", () => {
+  setConsoleExpanded(!stonesoupConsoleRoot.classList.contains("stonesoup-console--expanded"));
+});
+
+btnConsoleCollapse.addEventListener("click", () => {
+  setConsoleExpanded(false);
+});
+
+btnConsoleClear.addEventListener("click", () => {
+  clearConsoleBuffer();
+});
+
+/** Keepalive for dev proxies (e.g. Vite ``/ws``) that drop idle WebSockets. */
+let wsKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
 function connectWs() {
+  if (wsKeepaliveTimer != null) {
+    window.clearInterval(wsKeepaliveTimer);
+    wsKeepaliveTimer = null;
+  }
   ws?.close();
   ws = new WebSocket(wsUrl());
   ws.onopen = () => {
     wsDot.classList.add("on");
     wsDot.title = "Live reload: connected";
     wsDot.setAttribute("aria-label", "WebSocket connected");
+    wsKeepaliveTimer = window.setInterval(() => {
+      if (ws != null && ws.readyState === WebSocket.OPEN) {
+        ws.send("ping");
+      }
+    }, 25000);
   };
   ws.onclose = () => {
+    if (wsKeepaliveTimer != null) {
+      window.clearInterval(wsKeepaliveTimer);
+      wsKeepaliveTimer = null;
+    }
     wsDot.classList.remove("on");
     wsDot.title = "Live reload: disconnected (retrying…)";
     wsDot.setAttribute("aria-label", "WebSocket disconnected");
@@ -1146,7 +1618,60 @@ function connectWs() {
         const t = typeof data.text === "string" ? data.text : "";
         if (Number.isInteger(ci) && t) appendCellStreamChunk(ci, t);
       } else if (data.type === "run_end") {
+        const ci = Number(data.cell_index);
+        if (Number.isInteger(ci) && (data as { ok?: boolean }).ok) {
+          staleCells.delete(ci);
+          syncCellStaleClassForIndex(ci);
+          renderPipelineBar();
+        }
         scheduleKernelVarsRefresh();
+        // Cell code can call ``stonesoup.load_model`` without the HTTP model-load path,
+        // so re-fetch the HF bundle list for the toolbar (same as ``app_log_end`` /models).
+        void fetchLoadedModels();
+      } else if (data.type === "app_log_start") {
+        const op =
+          typeof (data as { op?: string }).op === "string"
+            ? (data as { op: string }).op
+            : "";
+        const sep =
+          op === "model_load" ? "\n\n── model load ──\n" : "\n\n── log ──\n";
+        appLogBuffer = trimConsoleBuffer(appLogBuffer + sep);
+        renderConsoleBuffer();
+      } else if (data.type === "app_log") {
+        const t = typeof data.text === "string" ? data.text : "";
+        appendAppLogChunk(t);
+      } else if (data.type === "app_log_end") {
+        const ok = Boolean((data as { ok?: boolean }).ok);
+        const errRaw = (data as { error?: string }).error;
+        const err = typeof errRaw === "string" ? errRaw : "";
+        const op =
+          typeof (data as { op?: string }).op === "string" ? (data as { op: string }).op : "";
+        if (!ok && err) {
+          appendAppLogChunk(`\n[error] ${err}\n`);
+        }
+        scheduleKernelVarsRefresh();
+        if (op === "model_load") {
+          void fetchLoadedModels().then((loaded) => {
+            if (ok) {
+              const repos = loaded.map((item) => item.repo_id);
+              if (repos.length) {
+                setStatus(
+                  `Loaded ${repos.length === 1 ? "" : `${repos.length} models: `}${repos.join(", ")}`,
+                );
+                rememberHfRepoIdsLoaded(repos);
+                void refreshModelRepoSuggestions();
+              } else {
+                setStatus("Model load finished");
+              }
+            } else {
+              setStatus(
+                err
+                  ? `Model load failed — ${err.length > 120 ? `${err.slice(0, 120)}…` : err}`
+                  : "Model load failed",
+              );
+            }
+          });
+        }
       }
     } catch {
       /* ignore */
@@ -2520,7 +3045,7 @@ async function postWatch() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
     });
-    const j = (await r.json()) as {
+    const j = (await readApiJson(r)) as {
       detail?: string;
       revision?: number;
       n_cells?: number;
@@ -2548,6 +3073,7 @@ async function postWatch() {
     }
     setStatus(`watching · rev ${j.revision} · ${j.n_cells} cells`);
     scheduleKernelVarsRefresh();
+    void fetchLoadedModels();
   } catch (e) {
     setStatus(String(e));
   } finally {
@@ -2572,7 +3098,12 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const j = await r.json();
+    const j = (await readApiJson(r)) as {
+      ok?: boolean;
+      stdout?: string;
+      stderr?: string;
+      detail?: string;
+    };
     if (!r.ok) throw new Error(j.detail || r.statusText);
     const peeled = peelStonesoupRenderHint(
       foldCarriageReturns(typeof j.stdout === "string" ? j.stdout : ""),
@@ -2580,7 +3111,7 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
     const nextOut: CellOutput = {
       stdout: peeled.body,
       stderr: foldCarriageReturns(typeof j.stderr === "string" ? j.stderr : ""),
-      ok: j.ok,
+      ok: Boolean(j.ok),
     };
     const rawDur = (j as { duration_sec?: unknown }).duration_sec;
     if (typeof rawDur === "number" && Number.isFinite(rawDur)) nextOut.durationSec = rawDur;
@@ -2676,6 +3207,7 @@ async function resetServer() {
             setStatus("Server restarted — pick a file and click Watch.");
           }
           scheduleKernelVarsRefresh();
+          void fetchLoadedModels();
           return;
         }
       } catch {
@@ -2812,6 +3344,15 @@ btnCellsAutoLayout.addEventListener("click", () => {
 
 btnWatch.addEventListener("click", () => postWatch());
 btnReset.addEventListener("click", () => resetServer());
+btnModelLoad.addEventListener("click", () => void loadModelsFromToolbar());
+btnModelUnloadOne.addEventListener("click", () => void unloadSelectedModelFromToolbar());
+btnModelUnloadAll.addEventListener("click", () => void unloadAllModelsFromToolbar());
+modelsLoadedSelect.addEventListener("change", () => copyLoadedModelRepoIdToClipboard());
+modelRepoInput.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  void loadModelsFromToolbar();
+});
 
 window.addEventListener("resize", () => {
   if (lastCells.length) applyFloatingLayout();
@@ -3480,5 +4021,7 @@ bindPipelineDnD();
 bindPipelineChipCanvasHover();
 renderPipelineBar();
 initKernelVarsDock();
+initStonesoupConsole();
 connectWs();
-postWatch();
+void fetchLoadedModels();
+void refreshModelRepoSuggestions();

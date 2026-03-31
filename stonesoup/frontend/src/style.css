@@ -86,11 +86,32 @@ body {
 
 .toolbar {
   display: flex;
-  gap: 6px;
-  align-items: center;
   flex-wrap: wrap;
+  /* Space between watch (left) and models (right); larger row-gap when the bar wraps. */
+  gap: 16px clamp(40px, 7vw, 80px);
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 8px;
   flex-shrink: 0;
+}
+
+.toolbar-watch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.toolbar-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(560px, 100%);
 }
 
 .toolbar select {
@@ -137,6 +158,45 @@ body {
   border-radius: 2px;
   background: var(--vs-bg-input);
   color: inherit;
+}
+
+.toolbar .model-repo-combo {
+  flex: 1 1 120px;
+  min-width: min(100px, 28vw);
+  max-width: 260px;
+  display: block;
+}
+
+.toolbar .model-repo-combo .model-repo-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.toolbar .model-repo-input {
+  padding: 6px 8px;
+  border: 1px solid var(--vs-border);
+  border-radius: 2px;
+  background: var(--vs-bg-input);
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.toolbar-models select#models-loaded-select {
+  min-width: min(100px, 22vw);
+  max-width: min(280px, 42vw);
+  padding: 5px 8px;
+  border: 1px solid var(--vs-border);
+  border-radius: 2px;
+  background: var(--vs-bg-input);
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.toolbar-models button:not(.primary) {
+  padding: 6px 8px;
 }
 
 button {
@@ -846,6 +906,70 @@ span.cell-cursor-link--disabled.cell-cursor-link--icon {
   flex: 1 1 0;
   min-height: 0;
   gap: 0;
+}
+
+/* Server log strip: WebSocket app_log_* (e.g. tqdm on stderr during Load model). Full width; dock FABs stay above (z-index 45). */
+.stonesoup-console {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.stonesoup-console-panel {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border: 1px solid var(--vs-border);
+  border-radius: 6px;
+  background: var(--vs-bg-side);
+  box-shadow:
+    0 4px 24px color-mix(in srgb, #000 28%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--vs-border) 50%, transparent);
+  overflow: hidden;
+  height: min(240px, 32vh);
+  min-height: 100px;
+  max-height: min(240px, 32vh);
+}
+
+.stonesoup-console:not(.stonesoup-console--expanded) .stonesoup-console-panel {
+  display: none;
+}
+
+.stonesoup-console-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vs-border);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--vs-bg-side) 88%, var(--vs-border));
+  border-radius: 6px 6px 0 0;
+}
+
+.stonesoup-console-title {
+  flex: 1;
+  font-weight: 600;
+  color: var(--vs-fg-dim);
+}
+
+.stonesoup-console-pre {
+  margin: 0;
+  padding: 6px 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--vs-fg);
+  background: color-mix(in srgb, var(--vs-bg-editor) 92%, var(--vs-border));
 }
 
 /* Auto-layout: sits in .kernel-vars-dock-bar next to { } kernel vars chip (bottom-left stack). */
