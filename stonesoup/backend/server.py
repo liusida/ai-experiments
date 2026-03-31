@@ -7,7 +7,10 @@ import logging
 import os
 import queue
 import time
+import traceback
 from collections import OrderedDict, defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -17,6 +20,15 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from stonesoup.experiment.paths import repo_root as stonesoup_root
+
+from stonesoup.backend.hf_models import (
+    ModelLoadRuntimeError,
+    list_hf_hub_cached_model_repo_ids,
+    list_loaded_models,
+    load_models_into_kernel,
+    unload_models_from_kernel,
+)
 from stonesoup.backend.kernel import Cell, Kernel, parse_cells
 from stonesoup.backend.watcher import FileWatcher
 
@@ -44,14 +56,6 @@ def _restart_server_process() -> None:
 
 
 # --- path policy ---
-
-
-def stonesoup_root() -> Path:
-    env = os.environ.get("STONESOUP_ROOT")
-    if env:
-        return Path(env).expanduser().resolve()
-    # stonesoup/backend/server.py -> repo root is parent of stonesoup/
-    return Path(__file__).resolve().parent.parent.parent
 
 
 def safe_py_path(path_str: str) -> Path:
@@ -132,6 +136,13 @@ def _kernel_for_watched_path(path: Path | None) -> Kernel | None:
     if path is None or not path.is_file():
         return None
     return _get_or_create_kernel(path)
+
+
+def _require_watched_path() -> Path:
+    watched = state.watched_path
+    if watched is None or not watched.is_file():
+        raise HTTPException(status_code=400, detail="Watch a Python file first.")
+    return watched.resolve()
 
 
 def _kernel_sessions_payload() -> tuple[str | None, list[dict[str, Any]]]:
@@ -296,7 +307,35 @@ class RunBody(BaseModel):
     inject: dict[str, Any] | None = None
 
 
-app = FastAPI(title="Stonesoup", version="0.1.0")
+class ModelLoadItemBody(BaseModel):
+    repo_id: str
+    name: str | None = None
+    # auto: pick by config (causal LM vs vision-language, etc.); causal_lm / image_text force one path
+    model_kind: str | None = None
+
+
+class ModelsLoadBody(BaseModel):
+    items: list[ModelLoadItemBody]
+    device_map: str | None = "auto"
+    torch_dtype: str | None = None
+    trust_remote_code: bool = False
+    model_kind: str | None = "auto"
+
+
+class ModelsUnloadBody(BaseModel):
+    names: list[str] | None = None
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    state.loop = asyncio.get_running_loop()
+    try:
+        yield
+    finally:
+        state.loop = None
+
+
+app = FastAPI(title="Stonesoup", version="0.1.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -321,15 +360,29 @@ if _data_images_dir.is_dir():
 else:
     logger.warning("Static data/images directory not found; skipping /data/image mount: %s", _data_images_dir)
 
-
-@app.on_event("startup")
-async def _startup() -> None:
-    state.loop = asyncio.get_running_loop()
+_outputs_root = stonesoup_root() / "outputs"
+_stonesoup_cell_out = _outputs_root / "stonesoup"
+try:
+    _stonesoup_cell_out.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/outputs",
+        StaticFiles(directory=str(_outputs_root.resolve()), check_dir=True),
+        name="outputs",
+    )
+except OSError as exc:
+    logger.warning("Could not mount /outputs (cell images): %s", exc)
 
 
 @app.get("/api/health")
 async def health() -> dict:
     return {"ok": True}
+
+
+def _mtime_or_zero(path: Path) -> float:
+    try:
+        return float(path.stat().st_mtime)
+    except OSError:
+        return 0.0
 
 
 @app.get("/api/py-files")
@@ -347,10 +400,11 @@ async def api_py_files(
     """List ``.py`` files under a subdirectory of the repo (for UI dropdown)."""
     d = subdir.strip()
     if not d:
-        return {"dir": "", "files": [], "recursive": recursive}
+        return {"dir": "", "files": [], "mtimes": [], "recursive": recursive}
     folder = safe_dir_under_root(d)
     root = stonesoup_root()
     files: list[str] = []
+    mtimes: list[float] = []
     if recursive:
         for p in sorted(folder.rglob("*.py")):
             if not p.is_file():
@@ -361,11 +415,18 @@ async def api_py_files(
             except ValueError:
                 continue
             files.append(rel.as_posix())
+            mtimes.append(_mtime_or_zero(p))
     else:
         for p in sorted(folder.glob("*.py")):
             if p.is_file():
                 files.append(p.relative_to(root).as_posix())
-    return {"dir": d.replace("\\", "/"), "files": files, "recursive": recursive}
+                mtimes.append(_mtime_or_zero(p))
+    return {
+        "dir": d.replace("\\", "/"),
+        "files": files,
+        "mtimes": mtimes,
+        "recursive": recursive,
+    }
 
 
 @app.post("/api/watch")
@@ -446,6 +507,7 @@ async def api_run(body: RunBody) -> dict:
 
         stdout, stderr = "", ""
         ok = False
+        elapsed_s = 0.0
         await _broadcast_ws_json({"type": "run_start", "cell_index": idx})
         try:
             fut = asyncio.create_task(asyncio.to_thread(worker))
@@ -463,15 +525,136 @@ async def api_run(body: RunBody) -> dict:
                     }
                 )
             stdout, stderr, ok, elapsed_s = await fut
-            return {
-                "ok": ok,
-                "cell_index": idx,
-                "stdout": stdout,
-                "stderr": stderr,
-                "duration_sec": elapsed_s,
-            }
+        except Exception:
+            logger.exception("api_run failed")
+            ok = False
+            tb = traceback.format_exc()
+            stderr = f"{stderr}\n{tb}" if stderr else tb
         finally:
             await _broadcast_ws_json({"type": "run_end", "cell_index": idx, "ok": ok})
+
+        return {
+            "ok": ok,
+            "cell_index": idx,
+            "stdout": stdout,
+            "stderr": stderr,
+            "duration_sec": elapsed_s,
+        }
+
+
+@app.get("/api/models")
+async def api_models() -> dict:
+    watched_path = state.watched_path.resolve() if state.watched_path is not None else None
+    kernel = _kernel_for_watched_path(watched_path)
+    return {
+        "watched_path": str(watched_path) if watched_path is not None else None,
+        "loaded": list_loaded_models(kernel),
+    }
+
+
+@app.get("/api/models/hf-cache")
+async def api_models_hf_cache() -> dict:
+    """Repo ids for models found under the local Hugging Face Hub cache (on this machine)."""
+    repo_ids = await asyncio.to_thread(list_hf_hub_cached_model_repo_ids)
+    return {"repo_ids": repo_ids}
+
+
+@app.post("/api/models/load")
+async def api_models_load(body: ModelsLoadBody) -> dict:
+    if not body.items:
+        raise HTTPException(status_code=400, detail="Provide at least one model to load.")
+    watched = _require_watched_path()
+    items_arg = [
+        {"repo_id": item.repo_id, "name": item.name, "model_kind": item.model_kind}
+        for item in body.items
+    ]
+
+    async def _models_load_job() -> None:
+        """Serialize on ``_kernel_run_lock`` with cell runs; errors go to WS ``app_log_end`` only."""
+        log_ok = True
+        log_error: str | None = None
+        try:
+            async with _kernel_run_lock(watched):
+                kernel = _kernel_for_watched_path(watched)
+                if kernel is None:
+                    log_ok = False
+                    log_error = "Watched file is not available"
+                else:
+                    chunk_queue: queue.Queue[tuple[str, str] | None] = queue.Queue()
+
+                    def on_stdout(s: str) -> None:
+                        if s:
+                            chunk_queue.put(("stdout", s))
+
+                    def on_stderr(s: str) -> None:
+                        if s:
+                            chunk_queue.put(("stderr", s))
+
+                    await _broadcast_ws_json({"type": "app_log_start", "op": "model_load"})
+                    try:
+
+                        def worker() -> dict[str, Any]:
+                            try:
+                                return load_models_into_kernel(
+                                    kernel,
+                                    items=items_arg,
+                                    device_map=body.device_map,
+                                    torch_dtype=body.torch_dtype,
+                                    trust_remote_code=body.trust_remote_code,
+                                    default_model_kind=body.model_kind,
+                                    on_stdout_chunk=on_stdout,
+                                    on_stderr_chunk=on_stderr,
+                                )
+                            finally:
+                                chunk_queue.put(None)
+
+                        fut = asyncio.create_task(asyncio.to_thread(worker))
+                        while True:
+                            item = await asyncio.to_thread(chunk_queue.get)
+                            if item is None:
+                                break
+                            stream_name, text = item
+                            await _broadcast_ws_json(
+                                {"type": "app_log", "stream": stream_name, "text": text}
+                            )
+                        await fut
+                    except (ModelLoadRuntimeError, ValueError) as exc:
+                        log_ok = False
+                        log_error = str(exc)
+                    except Exception as exc:
+                        log_ok = False
+                        log_error = str(exc)
+                        logger.exception("Failed to load Hugging Face models")
+        except Exception as exc:
+            log_ok = False
+            if log_error is None:
+                log_error = str(exc)
+            logger.exception("Model load task failed before or during lock")
+        finally:
+            end_payload: dict[str, Any] = {"type": "app_log_end", "ok": log_ok, "op": "model_load"}
+            if log_error:
+                end_payload["error"] = log_error
+            await _broadcast_ws_json(end_payload)
+
+    asyncio.create_task(_models_load_job())
+    return {"ok": True, "accepted": True}
+
+
+@app.post("/api/models/unload")
+async def api_models_unload(body: ModelsUnloadBody) -> dict:
+    if body.names is not None and not body.names:
+        raise HTTPException(status_code=400, detail="Provide at least one model name or null for all.")
+    watched = _require_watched_path()
+    async with _kernel_run_lock(watched):
+        kernel = _kernel_for_watched_path(watched)
+        if kernel is None:
+            raise HTTPException(status_code=400, detail="Watched file is not available")
+        try:
+            result = await asyncio.to_thread(unload_models_from_kernel, kernel, names=body.names)
+        except Exception as exc:
+            logger.exception("Failed to unload Hugging Face models")
+            raise HTTPException(status_code=500, detail=f"Failed to unload model(s): {exc}") from exc
+    return {"ok": True, **result}
 
 
 @app.post("/api/reset")

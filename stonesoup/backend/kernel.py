@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+from contextvars import ContextVar
 import hashlib
 import linecache
 import re
@@ -13,6 +14,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from types import CodeType
 from typing import Any, Callable
+
+# Set for the duration of ``Kernel.run_cell`` so ``stonesoup.load_model`` can resolve UI-loaded weights.
+active_kernel: ContextVar["Kernel | None"] = ContextVar("stonesoup_active_kernel", default=None)
 
 # Headless matplotlib before any cell can ``import matplotlib.pyplot`` (avoids TkAgg in worker
 # threads: tk ``__del__`` / "main thread is not in main loop" / Tcl_AsyncDelete).
@@ -256,27 +260,31 @@ class Kernel:
         out_sink = _StreamSink(on_stdout_chunk)
         err_sink = _StreamSink(on_stderr_chunk)
         ok = True
+        token = active_kernel.set(self)
         try:
-            # Reserved pipeline names: defined every run so single-cell Run does not NameError;
-            # client inject overwrites before exec.
-            self.globals["LOOP_INDEX"] = None
-            self.globals["LOOP_ITEM"] = None
-            self._apply_inject(inject)
-            if source_path is not None:
-                self.globals["__file__"] = source_path
-            code = _compile_cell(source, source_path, start_line)
-            with redirect_stdout(out_sink), redirect_stderr(err_sink):
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        message=r".*Matplotlib GUI outside of the main thread.*",
-                        category=UserWarning,
-                    )
-                    exec(code, self.globals, self.globals)
-        except BaseException:
-            ok = False
-            err_sink.write(traceback.format_exc())
-        return out_sink.getvalue(), err_sink.getvalue(), ok
+            try:
+                # Reserved pipeline names: defined every run so single-cell Run does not NameError;
+                # client inject overwrites before exec.
+                self.globals["LOOP_INDEX"] = None
+                self.globals["LOOP_ITEM"] = None
+                self._apply_inject(inject)
+                if source_path is not None:
+                    self.globals["__file__"] = source_path
+                code = _compile_cell(source, source_path, start_line)
+                with redirect_stdout(out_sink), redirect_stderr(err_sink):
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings(
+                            "ignore",
+                            message=r".*Matplotlib GUI outside of the main thread.*",
+                            category=UserWarning,
+                        )
+                        exec(code, self.globals, self.globals)
+            except BaseException:
+                ok = False
+                err_sink.write(traceback.format_exc())
+            return out_sink.getvalue(), err_sink.getvalue(), ok
+        finally:
+            active_kernel.reset(token)
 
     def snapshot_globals_for_ui(self, *, max_preview: int = 120) -> list[dict[str, str]]:
         """JSON-safe name / type / repr preview for UI (excludes dunder and ``__builtins__``)."""
