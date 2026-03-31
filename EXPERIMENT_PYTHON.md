@@ -1,80 +1,87 @@
 # Guideline: experiment `.py` files for Stonesoup
 
-Use this when adding or editing scripts under the repo that you want to **watch and run cell-by-cell** in the Stonesoup GUI (see [`stonesoup/README.md`](stonesoup/README.md)).
+For Python under this repo that you **watch and run cell-by-cell** in Stonesoup (UI and backend: [`stonesoup/README.md`](stonesoup/README.md)).
 
-## Agents: do not run the file to “verify”
+Below, **each heading is one feature area**—details for that feature appear **only** under that heading so nothing contradicts elsewhere.
 
-After editing or creating an experiment `.py`, **do not execute it** (no `uv run python …`, no full pipeline) unless the user explicitly asks. These scripts often **download models, load huge datasets, or train for a long time**; verification belongs in the **Stonesoup GUI** (Watch → run cells when the user chooses). It is enough to **`py_compile`** or rely on the editor/linter when a quick syntax check is needed.
+---
 
-## Cell markers (required for Stonesoup)
+## Cell markers and titles
 
-- Split the file with **VS Code / Spyder-style** cell headers on their **own line**:
-  - `# %%` or `#%%`
-  - **Always put a short, unique title on the same line** after the marker, e.g. `# %% Imports & helpers`. Stonesoup hashes the **entire** marker line to build a stable `marker_key` for “Updated” tracking and for matching cells across edits—bare `# %%` with no title (or duplicated titles) makes identity weaker and pairing ambiguous.
-- The parser treats each block **after** a marker until the next marker (or EOF) as one cell. A file may start with code **before** the first `# %%`; that leading block is one cell with an **implicit** marker key (no title in the UI—avoid this).
-- **Start the file with a named first cell:** put `# %% Imports & paths` (or similar) on **line 1**. You can place the **module docstring** and **`from __future__ import annotations`** immediately after that marker, still inside the same cell. Comments do not count as Python statements, so the docstring remains the module’s `__doc__`; `from __future__` is still valid after the docstring per the usual rules. Otherwise docstring + future import sit in an unnamed leading cell in Stonesoup.
+- Use **VS Code / Spyder-style** cell headers on their **own line**: `# %%` or `#%%`, then a **short, distinct title** on the **same** line (e.g. `# %% Imports & paths`). **Do not reuse the exact same `# %% …` line** for two different cells—duplicate openers are ambiguous after you insert, delete, or reorder cells.
+- A block **after** a marker until the next marker (or EOF) is one **cell**. Content **before** the first `# %%` becomes a single **implicit** head cell (no title in the UI)—**avoid** that by making the **very first line of the file** the `# %% …` line (with a title). **Do not** put a module docstring, `from __future__`, imports, blank “preamble” code, or anything else **above** it.
+- **After** each `# %%` line, that cell’s body is normal Python. If you use `from __future__ import annotations`, place it at the **start of the earliest cell body** (it must stay near the top of the file per Python).
 - Prefer **many small cells** over one huge cell so you can re-run only what changed.
 
-## Layout and docstring (recommended)
+---
 
-1. **First cell** begins with `# %% Imports & helpers` (or `Imports & paths`) on the **first line of the file**, then:
-   - Module docstring describing what the experiment does.
-   - **How to run outside Stonesoup:** `uv run python <repo-relative-path>.py`
-   - **Stonesoup:** state that the user should **Watch** this file and run cells; note if each `# %%` is intended to run **standalone** (define knobs in that cell) or depends on prior cells.
-2. **`from __future__ import annotations`** if you use modern typing.
-3. **Paths:** avoid hard-coded absolute paths. Typical pattern:
-   - Repo root: `REPO_ROOT = Path(__file__).resolve().parent.parent.parent` when the script lives under `experiments/2026-…/` (two levels below repo root).
-   - Experiment-local outputs: `Path(__file__).resolve().parent / "plots"` or `"reports"`.
-   - Shared repo data: e.g. `REPO_ROOT / "data" / "embedding-layers"` (see [`experiments/2026-03-23-Embedding/demo.py`](experiments/2026-03-23-Embedding/demo.py)).
+## Kernel behavior and how to structure cells
 
-## Runnable cells
+- **One persistent kernel per watched `.py`:** globals are shared across all cells in that file. Switching **Watch** to another script uses a **different** namespace.
+- **Order matters** for whatever you leave in `globals` from earlier cells—unless the user **Reset**s the backend (or a cached kernel is evicted when the LRU cache is full).
+- Make cells **re-runnable** where it helps: put paths, flags, model/repo ids, and other knobs **in the cell that consumes them**.
+- **Shared** (non-import) paths, constants, and helpers used in **multiple** cells belong in the **first** cell that establishes them—or duplicate them per cell if you want each cell fully standalone.
 
-- **Kernel is shared** across cells **for that watched `.py` only** (switching **Watch** to another script uses a separate namespace). Globals persist while you stay on the file. Order matters unless you click **Reset** (restarts the backend) or a kernel is evicted when the cache is full.
-- **Optional per-cell input:** end the ``# %%`` line with ``# stonesoup:cell-input`` (after the title). Only those cells get a text field next to **Run**; its value is injected as the string global **`CELL_INPUT`** (pipelines too). Example marker: `# %% Try a word # stonesoup:cell-input`. In code: `print(CELL_INPUT)`.
-- Design each cell to be **re-runnable** where practical: set `MODEL_NAME`, paths, and flags **inside** the cell that needs them (pattern in `demo.py`).
-- **Prefer standalone cells:** when you can, make a cell self-contained so re-running it after **Reset** or out of order does not break. If a variable or helper is **only used in one cell**, define it **inside that cell** instead of at the top of the file or in the imports cell—this keeps the dependency obvious and avoids stale globals from an earlier run.
-- Put **shared** setup in the first cell (imports, paths, constants, helpers used in multiple cells); put **cell-local** knobs, small helpers, and one-off formatting in the cells that use them.
+---
 
-## Outputs
+## Per-cell input field
 
-- **Figures:** write under an experiment folder, e.g. `…/plots/`, and `mkdir(parents=True, exist_ok=True)` as in `demo.py`.
-- **Reports / logs:** e.g. `…/reports/` (see [`experiments/2026-03-23-Embedding/embedding_least_norm_tokens.py`](experiments/2026-03-23-Embedding/embedding_least_norm_tokens.py)).
-- Optional **tqdm** for long loops when running in a terminal; in Stonesoup, stdout still streams to the cell output.
+- Append **`# stonesoup:cell-input`** to the `# %%` line (after the title). The UI adds a text box next to **Run**; Stonesoup sets **`CELL_INPUT`** to that string (pipelines too). Example: `# %% Try a word # stonesoup:cell-input`.
+- For script runs outside Stonesoup, use e.g. `globals().get("CELL_INPUT", "")`.
 
-### Stdout render hint (optional)
+---
 
-**Default:** stdout is shown as **plain text** (escaped). Stonesoup does **not** infer HTML or Markdown from the payload.
+## Rich stdout
 
-To get **rich** output, print this as the **first line** of stdout (then the payload on following lines):
+- **Default:** escaped plain text. For **HTML** or **Markdown**, the **first** line of stdout must be `# stonesoup:render=html` or `# stonesoup:render=md` / `markdown`; then print the body. **No** other stdout before that line (`text` / `auto` = plain, same as skipping the hint).
+- The UI hides the hint in the shown/copied body and offers a chip to flip rich vs plain. Helpers: `stonesoup.STONESOUP_RENDER_HTML`, `STONESOUP_RENDER_MD`, or `stonesoup_render_prefix("html")` (include the newline).
 
-`# stonesoup:render=html` · `markdown` or `md` · `text` or `auto` (both mean plain text, same as omitting the hint).
+---
 
-The UI **removes** that line from the stored stdout (copy-to-clipboard and display body never include it).
+## Paths and writing outputs
 
-For **HTML** or **Markdown** (hinted) stdout, the output header shows a small **HTML** / **MD** chip; click it to toggle **escaped plain text** and back.
+- **`stonesoup.repo_root()`** — repo root (`STONESOUP_ROOT` if set, else editable-install layout). Pair with **`stonesoup.data_dir()`** for `data/` (created automatically).
+- **`stonesoup.plot_dir()`** — save figures you want in the UI: same tree as **`stonesoup.show()`** (`outputs/stonesoup/<repo-relative script path>/`, served as **`/outputs/…`**); created automatically.
+- **`stonesoup.script_dir()`** — folder containing the watched / running `.py` (e.g. stuff you keep next to the script, not under `outputs/`).
 
-Helpers when `stonesoup` is installed editable: `from stonesoup import STONESOUP_RENDER_HTML` or `stonesoup_render_prefix("html")` — same strings with a trailing newline.
+---
 
-## Watch path in the GUI
+## Hugging Face models
 
-- Choose the script with the **folder** and **file** dropdowns (defaults under `experiments/`); the UI keeps the repo-relative path internally (same as e.g. `experiments/2026-03-23-Embedding/demo.py`). Query **`?path=`** still sets the initial file.
-- After saving the file on disk, cells **reload** over the WebSocket; **outputs are kept** when possible (same watched path, fingerprint-based “updated” markers).
+**Goal:** One in-kernel load per checkpoint, then reuse — avoid a second ad-hoc `from_pretrained` for the same weights.
 
-## Optional: “script-shaped” experiments
+**Prereq:** `load_model` needs **`transformers`** (repo optional **`models`** extra) and **PyTorch** — same environment setup as the rest of this repo; see **[`AGENTS.md`](AGENTS.md)** and **`pyproject.toml`**.
 
-- A file can still use `# %%` **only** to group logical sections while being run end-to-end with `uv run python …` (e.g. `embedding_least_norm_tokens.py`). Use **unique `# %%` titles** on every section line if you open it in Stonesoup.
+1. **Load weights** (pick one or combine; same kernel, no duplicate object for the same Hub id):
 
-## Stable cell identity (when the file changes)
+   * **Toolbar:** **Watch** the script → repo id → **Load**; **Unload** / **All** to free. UI details: [`stonesoup/README.md`](stonesoup/README.md).
+   * **Cell:** `stonesoup.load_model("Org/ModelRepo")` when the string contains **`/`**. If not already loaded, this uses the **same** load path as **Load**; if loaded, returns the **existing** `model` and `processor` (or **tokenizer** for text-only causal LMs).
 
-- `marker_key` is derived from the **raw `# %% …` line** (see [`stonesoup/backend/kernel.py`](stonesoup/backend/kernel.py) `fingerprint_marker_line`). Same line text → same key across reloads; change the line or the code body to drive “Updated” / diff behavior. Adding or removing `# stonesoup:cell-input` **changes** that line and therefore the key. **Do not reuse the exact same `# %%` title line for two different cells**—titles must be unique so each cell has a distinct key (duplicate marker lines are paired in file order and are easy to mis-associate when inserting cells).
+2. **Example:**
 
-## Quick checklist
+   ```python
+   import stonesoup
 
-- [ ] **Do not run** the script end-to-end to verify; leave execution to the user in Stonesoup (or when they ask).
-- [ ] **Line 1 is `# %% …`** with a unique title (no leading pre-marker block); docstring and `from __future__` live inside that first cell if used.
-- [ ] Every later cell starts with `# %%` / `#%%` **and a unique title on that line**.
-- [ ] Docstring mentions `uv run` path and Stonesoup **Watch** workflow.
-- [ ] Cells are as **standalone** as practical: single-use variables/helpers live in the cell that uses them; only **shared** setup sits in the first cell.
-- [ ] Paths derived from `Path(__file__)` (and `parent.parent.parent` for repo root when under `experiments/2026-…/`).
-- [ ] Outputs go to experiment `plots/` / `reports/` or documented shared `data/`.
-- [ ] Large downloads or models: note HF auth / `trust_remote_code` / memory in the docstring or comments.
+   model, processor = stonesoup.load_model("Qwen/Qwen3-VL-8B-Instruct")
+   ```
+
+---
+
+## Watch path and live reload in the GUI
+
+- Pick the file with **folder** + **file** dropdowns (defaults under `experiments/`); the UI stores a repo-relative path (`?path=` sets the initial file).
+- On save, cells **reload** over the WebSocket; **cell outputs are kept** when possible for the same watched file. The UI can show that a cell’s **source changed on disk** until you run it again.
+
+---
+
+## Optional: `# %%` for `uv run` only
+
+You may use `# %%` **only** to mark sections in a script meant to run end-to-end with `uv run python …`. If you also open it in Stonesoup, give **every** section line a **distinct** `# %%` opener (same rules as [Cell markers and titles](#cell-markers-and-titles)).
+
+---
+
+## For automation agents (e.g. Cursor)
+
+- **Do not** execute the experiment file end-to-end (`uv run python …`, full pipeline) **unless** the user explicitly asks—loads can be huge and slow.
+- **Do** use **`py_compile`** or editor/linter for a quick syntax check.
+
