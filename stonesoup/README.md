@@ -2,10 +2,19 @@
 
 Floating **cell runner** for a watched Python file: splits on `# %%` / `#%%`, shows cells in the UI, runs them in one **persistent Python kernel** (stdout/stderr per cell). Backend is **FastAPI** + **watchdog**; UI is **Vite**, opened in **any browser** (Firefox, Chromium, etc.).
 
+**Python package layout (repo root install: `uv pip install -e ".[stonesoup]"`):**
+
+| Area | Path | Role |
+|------|------|------|
+| Backend | `stonesoup.backend` | Server, watcher, kernel implementation. |
+| Frontend | `stonesoup/frontend/` | Browser app only (not a Python import). |
+| Experiment helpers | `stonesoup.experiment` | Utilities for code running *inside* watched cells (e.g. `load_model`); not the HTTP server. |
+
 ## Prerequisites
 
-- Repo **`.venv`** with `torch` / `transformers` if you run ML cells (see repo root setup).
+- Repo **`.venv`** with `torch` if you run ML cells (see repo root setup).
 - Backend deps: `fastapi`, `uvicorn`, `watchdog` (included if you install with `-e ".[stonesoup]"` at repo root).
+- Install `transformers` with the repo extra if you want the UI model loader: `uv pip install -e ".[stonesoup,models]"`.
 - **Node.js** for the Vite frontend (`npm run dev`).
 
 ## 1. Backend (terminal A)
@@ -37,6 +46,12 @@ npm run dev
 
 Open **http://127.0.0.1:5173/** in Firefox or another browser. Vite proxies `/api` and `/ws` to the backend. Use the **folder** and **file** dropdowns to pick any `*.py` under **`experiments/`** (grouped by dated subfolder); choosing a file starts **Watch** (or click **Watch** again). Override the list root with **`?dir=experiments/2026-03-23-Embedding`** or another repo-relative folder (still recursive). Edit the file on disk; cells refresh over **WebSocket** after a short debounce.
 
+**Model loader:** after you **Watch** a file, use the **right side of the top bar**: enter a Hugging Face **repo id** (comma- or newline-separated for several), click **Load**, then pick a loaded checkpoint in the **dropdown**. **Unload** removes the selected one; **All** clears every UI-loaded model for this script. Stonesoup picks an appropriate **Auto** class from the checkpoint (causal LM vs vision-language such as **Qwen3-VL**). Each load still creates an internal kernel variable (derived from the repo id); you normally refer to weights by the same **repo id** in experiment code. A single load also sets convenience globals `model`, `tokenizer`, `processor`, and `MODEL_REPO_ID`. For the HTTP API only, you may still pass a per-item `name` to choose the internal variable. JSON field `model_kind`: `auto` (default), `causal_lm`, or `image_text`.
+
+**Bottom console:** the **`>_`** control in the bottom **↻ | Console | { }** dock row opens a **server log** panel. While **Load** is in progress, **stderr/stdout** from the backend (including **tqdm** progress) streams over the WebSocket before the HTTP response returns. Progress bars use carriage returns; the UI folds `\r` like cell streams so lines do not grow without bound. Expand/collapse preference is stored in **`localStorage`** (`stonesoup_console_expanded`).
+
+**In experiment cells:** with the editable `stonesoup` package installed, use `import stonesoup` then `model, processor = stonesoup.load_model("Qwen/Qwen3-VL-8B-Instruct")` using the **same repo id** as in the UI. No second download. Outside a running Stonesoup cell, `load_model` raises `RuntimeError`.
+
 Each cell is a **floating panel** inside the page. Drag **empty space** in the cell canvas (not on a cell or the **↻ Loop** strip) to **pan** (scroll). Layout reflows when the watched path or the number of cells changes.
 
 **Pipeline:** the pipeline is a **tree** of steps: **cells** and **loops**. **Drag** a **canvas cell** (or the **↻ Loop** card below the cells) into a **drop slot** in the pipeline bar to insert at the **root** or **inside a loop**. Drag the grip on a **pipeline chip** or **loop** header to **reorder** or move between levels (you cannot drop a loop inside itself). **+ chain** appends the current cell at the **end of the root** list; use drag to place items elsewhere or fill a loop’s body. Example: **+ chain** cell 0 → drag **↻ Loop** onto the bar → drag cells 1–2 into the loop → drag cell 3 after the loop.
@@ -53,9 +68,12 @@ Optional: **`npm run build`** writes a static site to **`frontend/dist/`** (hand
 | POST | `/api/watch` | `{"path": "relative/or/abs/under/root.py"}` — start watcher, parse cells; response includes **`cells`**, **`revision`**, **`path`**, **`changed_cell_indices`** (same shape as WS) so the UI can refresh without waiting on the socket |
 | GET | `/api/cells` | Current cells + revision |
 | POST | `/api/run` | `{"cell_index": n, "inject": {...}?}` — optional `inject` merges into kernel globals before the cell. Cells whose marker ends with **`# stonesoup:cell-input`** get a header field; the UI sends that string as **`CELL_INPUT`**. |
+| GET | `/api/models` | Stonesoup-managed model bundles for the current watched kernel: `loaded: [{name, repo_id}]` |
+| POST | `/api/models/load` | Body: `items` — list of `{repo_id, name?, model_kind?}`; optional top-level `model_kind` (`auto` default, or `causal_lm`, `image_text`); optional `device_map`, `torch_dtype`, `trust_remote_code`. `auto` picks causal LM vs vision-language from the checkpoint config (e.g. Qwen3-VL). Responds immediately with `{ok, accepted: true}`; loading continues in the background. **Cell runs and load/unload share one lock per watched file**, so **executing a cell still waits** until any in-progress load on that kernel finishes (same process mutates one namespace — they cannot overlap safely). |
+| POST | `/api/models/unload` | `{"names": ["qwen"]}` or `{"names": null}` to unload all Stonesoup-managed model globals from the current watched kernel |
 | GET | `/api/kernel/vars` | `vars` (rows for the **current** watch only), `sessions` (`path`, `n_vars`, `current` per cached script kernel), `watched_path` (same idea as `/api/cells` `path`) |
 | POST | `/api/reset` | Restart the backend process (same CLI/env as startup; fresh interpreter; UI reconnects) |
-| WS | `/ws` | Push `{type:"cells", revision, cells, ...}` on file change (debounced ~0.25s). The watcher treats **modified**, **created**, and **moved** events so atomic saves (temp + rename) still trigger a reload.
+| WS | `/ws` | Push `{type:"cells", revision, cells, ...}` on file change (debounced ~0.25s). The watcher treats **modified**, **created**, and **moved** events so atomic saves (temp + rename) still trigger a reload. After **`POST /api/models/load`** returns, the background job pushes **`app_log_start`** / **`app_log`** (`stream`, `text` chunks) / **`app_log_end`** (`ok`, optional `error`, `op: "model_load"`) for the live console.
 
 ## Notes
 

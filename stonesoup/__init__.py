@@ -1,6 +1,13 @@
-"""Stonesoup: watched # %% cells + local Python kernel + floating UI."""
+"""Stonesoup: watched # %% cells + local Python kernel + floating UI.
+
+- ``stonesoup.backend``: FastAPI server, file watcher, in-process kernel.
+- ``stonesoup.frontend``: Vite browser UI (not importable as Python).
+- ``stonesoup.experiment``: helpers for experiment code running *inside* a Stonesoup cell.
+"""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 __version__ = "0.1.0"
 
@@ -13,9 +20,72 @@ STONESOUP_RENDER_MARKDOWN = "# stonesoup:render=markdown\n"
 STONESOUP_RENDER_MD = "# stonesoup:render=md\n"
 
 
+def repo_root() -> Path:
+    """Return the repository root; same rules as :func:`stonesoup.experiment.paths.repo_root`."""
+    from stonesoup.experiment.paths import repo_root as _repo_root
+
+    return _repo_root()
+
+
+def script_path() -> Path:
+    """Absolute path to the watched/running experiment ``.py``; see :func:`stonesoup.experiment.paths.script_path`."""
+    from stonesoup.experiment.paths import script_path as _sp
+
+    return _sp()
+
+
+def script_dir() -> Path:
+    """Directory of the watched experiment file; see :func:`stonesoup.experiment.paths.script_dir`."""
+    from stonesoup.experiment.paths import script_dir as _sd
+
+    return _sd()
+
+
+def plot_dir() -> Path:
+    """``outputs/stonesoup/<script path>/`` (web-served); see :func:`stonesoup.experiment.paths.plot_dir`."""
+    from stonesoup.experiment.paths import plot_dir as _pd
+
+    return _pd()
+
+
+def data_dir() -> Path:
+    """``repo_root/data`` ensured on disk; see :func:`stonesoup.experiment.paths.data_dir`."""
+    from stonesoup.experiment.paths import data_dir as _dd
+
+    return _dd()
+
+
 def stonesoup_render_prefix(mode: str) -> str:
     """First stdout line for Stonesoup (trailing newline). Rich: html, markdown/md; plain: text, auto."""
     m = mode.strip().lower()
     if m in ("auto", "text", "html", "markdown", "md"):
         return f"# stonesoup:render={m}\n"
     raise ValueError(f"Unknown stonesoup render mode: {mode!r}")
+
+
+def list_loaded_models():
+    """Re-export: models loaded in the active Stonesoup kernel (``name`` + ``repo_id`` per row)."""
+    from stonesoup.experiment import list_loaded_models as _list_loaded_models
+
+    return _list_loaded_models()
+
+
+def list_hf_hub_cached_repo_ids():
+    """Re-export: repo ids under the local Hugging Face Hub cache."""
+    from stonesoup.experiment import list_hf_hub_cached_repo_ids as _list_cached
+
+    return _list_cached()
+
+
+def load_model(ref: str):
+    """Re-export: get an HF bundle inside a Stonesoup cell; loads from hub if needed (repo id with ``/``)."""
+    from stonesoup.experiment import load_model as _load_model
+
+    return _load_model(ref)
+
+
+def show(fig=None, **kwargs):
+    """Save a Matplotlib figure to ``outputs/stonesoup/`` and print HTML for the Stonesoup UI."""
+    from stonesoup.experiment import show as _show
+
+    return _show(fig, **kwargs)

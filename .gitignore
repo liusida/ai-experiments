@@ -1,9 +1,18 @@
+tmp_*
+
+data/
+experiments/**/*.png
+experiments/**/*.pt
+
 .env
 .venv/
 __pycache__/
 *.py[cod]
 stonesoup/frontend/node_modules/
 stonesoup/frontend/dist/
+
+# Stonesoup cell figures (stonesoup.show)
+outputs/stonesoup/
 
 # Cached input embedding tables (large torch checkpoints)
 data/embedding-layers/*.pt

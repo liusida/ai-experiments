@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 usage() {
-  echo "Usage: ./start-stonesoup {backend|frontend|both}" >&2
+  echo "Usage: ./run-stonesoup {backend|frontend|both}" >&2
   echo "  backend   — FastAPI + kernel (http://127.0.0.1:8765)" >&2
   echo "  frontend  — Vite UI (http://127.0.0.1:5173), proxies API to backend" >&2
   echo "  both      — backend in background, frontend in foreground (default)" >&2
@@ -36,6 +36,23 @@ case "$cmd" in
       wait "$server_pid" 2>/dev/null || true
     }
     trap cleanup EXIT INT TERM
+    # Vite proxies /ws immediately; wait until uvicorn listens to avoid a one-shot ECONNREFUSED.
+    _wait_backend() {
+      local i
+      for i in $(seq 1 200); do
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+          echo "Stonesoup backend exited before binding to 127.0.0.1:8765" >&2
+          return 1
+        fi
+        if bash -c "echo >/dev/tcp/127.0.0.1/8765" 2>/dev/null; then
+          return 0
+        fi
+        sleep 0.05
+      done
+      echo "Timed out waiting for backend on 127.0.0.1:8765" >&2
+      return 1
+    }
+    _wait_backend || exit 1
     cd "$ROOT/stonesoup/frontend"
     if [[ ! -d node_modules ]]; then
       npm install
