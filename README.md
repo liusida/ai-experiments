@@ -1,3 +1,5 @@
+![UI](misc/screenshot.png)
+
 # Using this repo
 
 1. **Add a dated folder under [`experiments/`](experiments/)** (e.g. `experiments/2026-03-23-Embedding`) for your experiment. See [`experiments/README.md`](experiments/README.md) for a short index.
