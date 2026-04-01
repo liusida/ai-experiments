@@ -47,30 +47,42 @@ function cellFromApiPayload(raw: unknown): Cell {
   return c;
 }
 
-/** Deeplink to open the file in Cursor at 1-based line:column (OS must handle `cursor://`). */
-function cursorFileUrl(absolutePath: string, line: number, col: number = 1): string {
-  let p = absolutePath.trim().replace(/^file:\/\//i, "");
-  p = p.replace(/\\/g, "/");
-  if (/^[A-Za-z]:\//.test(p)) {
-    return `cursor://file/${p}:${line}:${col}`;
-  }
-  if (!p.startsWith("/")) {
-    p = `/${p}`;
-  }
-  return `cursor://file${p}:${line}:${col}`;
+const EDITOR_PREF_KEY = "stonesoup_editor";
+type EditorPref = "cursor" | "vscode";
+
+function getEditorPref(): EditorPref {
+  return (localStorage.getItem(EDITOR_PREF_KEY) as EditorPref | null) ?? "cursor";
+}
+function setEditorPref(v: EditorPref) {
+  localStorage.setItem(EDITOR_PREF_KEY, v);
 }
 
-function cellCursorHref(pathForLink: string | null | undefined, startLine: number): string {
+/** Deeplink to open a file at 1-based line:col in the chosen editor. */
+function editorFileUrl(absolutePath: string, line: number, col: number = 1): string {
+  let p = absolutePath.trim().replace(/^file:\/\//i, "");
+  p = p.replace(/\\/g, "/");
+  const scheme = getEditorPref() === "vscode" ? "vscode" : "cursor";
+  if (/^[A-Za-z]:\//.test(p)) {
+    return `${scheme}://file/${p}:${line}:${col}`;
+  }
+  if (!p.startsWith("/")) p = `/${p}`;
+  return `${scheme}://file${p}:${line}:${col}`;
+}
+
+function cellEditorHref(pathForLink: string | null | undefined, startLine: number): string {
   const t = pathForLink?.trim() ?? "";
   if (!t) return "";
-  const line =
-    Number.isFinite(startLine) && startLine >= 1 ? Math.floor(Number(startLine)) : 1;
-  return cursorFileUrl(t, line);
+  const line = Number.isFinite(startLine) && startLine >= 1 ? Math.floor(Number(startLine)) : 1;
+  return editorFileUrl(t, line);
 }
 
 function escapeHtmlAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
+
+/** Editor brand icons for the deeplink toggle button (simple-icons paths, viewBox 0 0 24 24, currentColor). */
+const EDITOR_ICON_CURSOR = `<svg class="editor-icon editor-icon--cursor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23"/></svg>`;
+const EDITOR_ICON_VSCODE = `<svg class="editor-icon editor-icon--vscode" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 19.06V4.94A1.5 1.5 0 0 0 23.15 2.587zM17.796 18.3L9.48 12l8.316-6.3z"/></svg>`;
 
 /** Cell toolbar icons (``currentColor``). ``py`` badge for the Cursor deeplink (Python source); run is play inside one “cell” frame. */
 const CELL_ICON_PYTHON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.35"/><text x="12" y="12" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="10" font-weight="800" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">py</text></svg>`;
@@ -279,6 +291,7 @@ app.innerHTML = `
       <div class="kernel-vars-dock-bar">
         <button type="button" class="cells-auto-fab" id="btn-cells-auto-layout" title="Discard saved positions and reflow cells into the automatic grid (fixes overlap after output or resize)" aria-label="Automatic cell layout">↻</button>
         <button type="button" class="cells-auto-fab" id="btn-console-toggle" title="Server log console (stderr/stdout during model load, etc.)" aria-label="Toggle console" aria-expanded="false">&gt;_</button>
+        <button type="button" class="cells-auto-fab" id="btn-editor-toggle" data-editor-pref="${getEditorPref()}" title="Switch editor for deeplinks (Cursor / VS Code)">${EDITOR_ICON_CURSOR}${EDITOR_ICON_VSCODE}</button>
         <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show kernel variables (per script)">
           <span class="kernel-vars-chip-icon" aria-hidden="true">{ }</span>
           <span class="kernel-vars-chip-sessions" id="kernel-vars-sessions"></span>
@@ -294,6 +307,7 @@ const fileSelect = app.querySelector<HTMLSelectElement>("#file-select")!;
 const pathInput = app.querySelector<HTMLInputElement>("#path-input")!;
 const btnWatch = app.querySelector<HTMLButtonElement>("#btn-watch")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
+const btnEditorToggle = app.querySelector<HTMLButtonElement>("#btn-editor-toggle")!;
 const modelRepoInput = app.querySelector<HTMLInputElement>("#model-repo-input")!;
 const modelRepoDatalist = app.querySelector<HTMLDataListElement>("#model-repo-datalist")!;
 const btnModelLoad = app.querySelector<HTMLButtonElement>("#btn-model-load")!;
@@ -2713,13 +2727,14 @@ function renderCells(cells: Cell[], path: string | null) {
     const slNum = slRaw === undefined || slRaw === null ? NaN : Number(slRaw);
     const startLine =
       Number.isFinite(slNum) && slNum >= 1 ? Math.floor(slNum) : 1;
-    const cursorHref = pathForEditorLink
-      ? cellCursorHref(pathForEditorLink, startLine)
+    const editorHref = pathForEditorLink
+      ? cellEditorHref(pathForEditorLink, startLine)
       : "";
+    const editorName = getEditorPref() === "vscode" ? "VS Code" : "Cursor";
     const codeControl =
-      cursorHref !== ""
-        ? `<a class="toggle cell-cursor-link cell-cursor-link--icon" draggable="false" href="${escapeHtmlAttr(cursorHref)}" title="Open this cell in Cursor (deeplink)" rel="noopener" aria-label="Open this cell in Cursor">${CELL_ICON_PYTHON}</a>`
-        : `<span class="toggle cell-cursor-link cell-cursor-link--disabled cell-cursor-link--icon" title="Watch a file to open in Cursor" aria-label="Open in Cursor unavailable: watch a file first">${CELL_ICON_PYTHON}</span>`;
+      editorHref !== ""
+        ? `<a class="toggle cell-cursor-link cell-cursor-link--icon" draggable="false" href="${escapeHtmlAttr(editorHref)}" title="Open this cell in ${editorName} (deeplink)" rel="noopener" aria-label="Open this cell in ${editorName}">${CELL_ICON_PYTHON}</a>`
+        : `<span class="toggle cell-cursor-link cell-cursor-link--disabled cell-cursor-link--icon" title="Watch a file to open in ${editorName}" aria-label="Open in ${editorName} unavailable: watch a file first">${CELL_ICON_PYTHON}</span>`;
     const runInputHtml = c.cell_input
       ? `<input type="text" class="cell-run-input" draggable="false" data-run-input="${c.index}" placeholder="CELL_INPUT" spellcheck="false" title="Injected as CELL_INPUT · Ctrl+Enter or ⌘+Enter to run this cell" aria-label="Cell run input" />`
       : "";
@@ -3344,6 +3359,12 @@ btnCellsAutoLayout.addEventListener("click", () => {
 
 btnWatch.addEventListener("click", () => postWatch());
 btnReset.addEventListener("click", () => resetServer());
+btnEditorToggle.addEventListener("click", () => {
+  const next: EditorPref = getEditorPref() === "cursor" ? "vscode" : "cursor";
+  setEditorPref(next);
+  btnEditorToggle.dataset.editorPref = next;
+  if (lastCells.length) renderCells(lastCells, lastPath);
+});
 btnModelLoad.addEventListener("click", () => void loadModelsFromToolbar());
 btnModelUnloadOne.addEventListener("click", () => void unloadSelectedModelFromToolbar());
 btnModelUnloadAll.addEventListener("click", () => void unloadAllModelsFromToolbar());

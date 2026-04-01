@@ -990,6 +990,11 @@ span.cell-cursor-link--disabled.cell-cursor-link--icon {
   box-sizing: border-box;
 }
 
+#btn-editor-toggle .editor-icon { display: none; width: 15px; height: 15px; flex-shrink: 0; }
+#btn-console-toggle { font-size: 14px; }
+#btn-editor-toggle[data-editor-pref="cursor"] .editor-icon--cursor { display: inline; }
+#btn-editor-toggle[data-editor-pref="vscode"] .editor-icon--vscode { display: inline; }
+
 .kernel-vars-dock-bar .kernel-vars-chip {
   align-self: center;
   min-height: var(--kernel-dock-bar-height);
