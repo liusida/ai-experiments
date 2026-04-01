@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import queue
+import threading
 import time
 import traceback
 from collections import OrderedDict, defaultdict
@@ -194,6 +195,8 @@ class AppState:
         self.watcher = FileWatcher()
         self.ws_clients: set[WebSocket] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
+        # Set for the duration of ``POST /api/run``; ``POST /api/run/abort`` sets this event.
+        self.run_cancel_event: threading.Event | None = None
 
 
 state = AppState()
@@ -471,75 +474,92 @@ async def api_run(body: RunBody) -> dict:
         raise HTTPException(status_code=400, detail="Watched file is not available")
 
     async with _kernel_run_lock(watched.resolve()):
-        source = state.cells[idx].source
-        inject = dict(body.inject or {})
-        source_path = str(watched.resolve())
-
-        chunk_queue: queue.Queue[tuple[str, str] | None] = queue.Queue()
-
-        def on_stdout(s: str) -> None:
-            if s:
-                chunk_queue.put(("stdout", s))
-
-        def on_stderr(s: str) -> None:
-            if s:
-                chunk_queue.put(("stderr", s))
-
-        kernel = _kernel_for_watched_path(watched)
-        if kernel is None:
-            raise HTTPException(status_code=400, detail="Watched file is not available")
-
-        def worker() -> tuple[str, str, bool, float]:
-            try:
-                t0 = time.perf_counter()
-                stdout, stderr, ok = kernel.run_cell(
-                    source,
-                    inject=inject,
-                    source_path=source_path,
-                    start_line=state.cells[idx].start_line,
-                    on_stdout_chunk=on_stdout,
-                    on_stderr_chunk=on_stderr,
-                )
-                elapsed_s = time.perf_counter() - t0
-                return stdout, stderr, ok, elapsed_s
-            finally:
-                chunk_queue.put(None)
-
-        stdout, stderr = "", ""
-        ok = False
-        elapsed_s = 0.0
-        await _broadcast_ws_json({"type": "run_start", "cell_index": idx})
+        state.run_cancel_event = threading.Event()
         try:
-            fut = asyncio.create_task(asyncio.to_thread(worker))
-            while True:
-                item = await asyncio.to_thread(chunk_queue.get)
-                if item is None:
-                    break
-                stream_name, text = item
-                await _broadcast_ws_json(
-                    {
-                        "type": "run_stream",
-                        "cell_index": idx,
-                        "stream": stream_name,
-                        "text": text,
-                    }
-                )
-            stdout, stderr, ok, elapsed_s = await fut
-        except Exception:
-            logger.exception("api_run failed")
-            ok = False
-            tb = traceback.format_exc()
-            stderr = f"{stderr}\n{tb}" if stderr else tb
-        finally:
-            await _broadcast_ws_json({"type": "run_end", "cell_index": idx, "ok": ok})
+            source = state.cells[idx].source
+            inject = dict(body.inject or {})
+            source_path = str(watched.resolve())
 
-        return {
-            "ok": ok,
-            "cell_index": idx,
-            "stdout": stdout,
-            "stderr": stderr,
-            "duration_sec": elapsed_s,
-        }
+            chunk_queue: queue.Queue[tuple[str, str] | None] = queue.Queue()
+
+            def on_stdout(s: str) -> None:
+                if s:
+                    chunk_queue.put(("stdout", s))
+
+            def on_stderr(s: str) -> None:
+                if s:
+                    chunk_queue.put(("stderr", s))
+
+            kernel = _kernel_for_watched_path(watched)
+            if kernel is None:
+                raise HTTPException(status_code=400, detail="Watched file is not available")
+
+            cancel_ev = state.run_cancel_event
+
+            def worker() -> tuple[str, str, bool, float]:
+                try:
+                    t0 = time.perf_counter()
+                    stdout, stderr, ok = kernel.run_cell(
+                        source,
+                        inject=inject,
+                        source_path=source_path,
+                        start_line=state.cells[idx].start_line,
+                        on_stdout_chunk=on_stdout,
+                        on_stderr_chunk=on_stderr,
+                        cancel_event=cancel_ev,
+                    )
+                    elapsed_s = time.perf_counter() - t0
+                    return stdout, stderr, ok, elapsed_s
+                finally:
+                    chunk_queue.put(None)
+
+            stdout, stderr = "", ""
+            ok = False
+            elapsed_s = 0.0
+            await _broadcast_ws_json({"type": "run_start", "cell_index": idx})
+            try:
+                fut = asyncio.create_task(asyncio.to_thread(worker))
+                while True:
+                    item = await asyncio.to_thread(chunk_queue.get)
+                    if item is None:
+                        break
+                    stream_name, text = item
+                    await _broadcast_ws_json(
+                        {
+                            "type": "run_stream",
+                            "cell_index": idx,
+                            "stream": stream_name,
+                            "text": text,
+                        }
+                    )
+                stdout, stderr, ok, elapsed_s = await fut
+            except Exception:
+                logger.exception("api_run failed")
+                ok = False
+                tb = traceback.format_exc()
+                stderr = f"{stderr}\n{tb}" if stderr else tb
+            finally:
+                await _broadcast_ws_json({"type": "run_end", "cell_index": idx, "ok": ok})
+
+            return {
+                "ok": ok,
+                "cell_index": idx,
+                "stdout": stdout,
+                "stderr": stderr,
+                "duration_sec": elapsed_s,
+            }
+        finally:
+            state.run_cancel_event = None
+
+
+@app.post("/api/run/abort")
+async def api_run_abort() -> dict[str, Any]:
+    """Set the cooperative cancel flag for the in-flight ``POST /api/run`` (if any)."""
+    ev = state.run_cancel_event
+    signaled = ev is not None
+    if signaled:
+        ev.set()
+    return {"ok": True, "signaled": signaled}
 
 
 @app.get("/api/models")

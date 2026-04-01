@@ -6,6 +6,7 @@ import ast
 import builtins
 from contextvars import ContextVar
 import hashlib
+import threading
 import linecache
 import re
 import traceback
@@ -17,6 +18,12 @@ from typing import Any, Callable
 
 # Set for the duration of ``Kernel.run_cell`` so ``stonesoup.load_model`` can resolve UI-loaded weights.
 active_kernel: ContextVar["Kernel | None"] = ContextVar("stonesoup_active_kernel", default=None)
+
+# Set for the duration of ``Kernel.run_cell`` when invoked from the server (``threading.Event`` or ``None``).
+run_cancel_event: ContextVar[threading.Event | None] = ContextVar(
+    "stonesoup_run_cancel_event",
+    default=None,
+)
 
 # Headless matplotlib before any cell can ``import matplotlib.pyplot`` (avoids TkAgg in worker
 # threads: tk ``__del__`` / "main thread is not in main loop" / Tcl_AsyncDelete).
@@ -212,6 +219,32 @@ class _StreamSink:
         return "".join(self._parts)
 
 
+class StonesoupRunCancelled(Exception):
+    """Raised when the UI requests abort during a cell run (cooperative; see :func:`check_abort`)."""
+
+
+RunAborted = StonesoupRunCancelled
+"""Alias for :exc:`StonesoupRunCancelled` (experiment-friendly name)."""
+
+
+def check_abort() -> None:
+    """If the UI clicked **Abort** for this cell run, raise :exc:`RunAborted`.
+
+    No-op when not running under the Stonesoup server or no cancel event is installed.
+    Call periodically in long loops, ``while`` blocks, or after heavy native work returns
+    to Python.
+
+    Example::
+
+        for x in xx:
+            stonesoup.check_abort()
+            ...
+    """
+    ev = run_cancel_event.get()
+    if ev is not None and ev.is_set():
+        raise StonesoupRunCancelled("run aborted")
+
+
 class Kernel:
     """One persistent global namespace for sequential ``exec`` of cell sources."""
 
@@ -242,6 +275,7 @@ class Kernel:
         start_line: int | None = None,
         on_stdout_chunk: Callable[[str], None] | None = None,
         on_stderr_chunk: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> tuple[str, str, bool]:
         """
         Execute ``source`` in the shared namespace.
@@ -255,12 +289,17 @@ class Kernel:
         Optional ``on_stdout_chunk`` / ``on_stderr_chunk`` are invoked for each ``write``
         (for streaming to the UI).
 
+        ``cancel_event`` (from the Stonesoup server) is published via :data:`run_cancel_event` so
+        ``stonesoup.check_abort()`` can raise :exc:`StonesoupRunCancelled` when the user clicks
+        **Abort**. Long native/GPU stretches are not interrupted until control returns to Python.
+
         Returns (stdout, stderr, ok). On failure, stderr includes traceback.
         """
         out_sink = _StreamSink(on_stdout_chunk)
         err_sink = _StreamSink(on_stderr_chunk)
         ok = True
         token = active_kernel.set(self)
+        cancel_ctx_tok = run_cancel_event.set(cancel_event)
         try:
             try:
                 # Reserved pipeline names: defined every run so single-cell Run does not NameError;
@@ -284,6 +323,7 @@ class Kernel:
                 err_sink.write(traceback.format_exc())
             return out_sink.getvalue(), err_sink.getvalue(), ok
         finally:
+            run_cancel_event.reset(cancel_ctx_tok)
             active_kernel.reset(token)
 
     def snapshot_globals_for_ui(self, *, max_preview: int = 120) -> list[dict[str, str]]:

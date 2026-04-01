@@ -21,6 +21,7 @@ Below, **each heading is one feature area**—details for that feature appear **
 - **Order matters** for whatever you leave in `globals` from earlier cells—unless the user **Reset**s the backend (or a cached kernel is evicted when the LRU cache is full).
 - Make cells **re-runnable** where it helps: put paths, flags, model/repo ids, and other knobs **in the cell that consumes them**.
 - **Shared** (non-import) paths, constants, and helpers used in **multiple** cells belong in the **first** cell that establishes them—or duplicate them per cell if you want each cell fully standalone.
+- **Long loops you might want to stop:** call **`stonesoup.check_abort()`** inside the loop (or every *N* steps). The toolbar **Abort** button cooperatively requests cancel; the call then raises **`stonesoup.RunAborted`**. It does not cut through a long GPU/native call until control returns to Python.
 
 ---
 

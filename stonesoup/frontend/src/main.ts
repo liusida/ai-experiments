@@ -240,6 +240,7 @@ app.innerHTML = `
       <input type="hidden" id="path-input" />
       <button type="button" class="primary" id="btn-watch">Watch</button>
       <button type="button" id="btn-reset" title="Restart the Stonesoup backend (fresh process; reclaims memory)">Reset</button>
+      <button type="button" id="btn-abort" disabled title="Cooperative stop (enabled only if this cell’s source contains check_abort — add stonesoup.check_abort() in long loops). Long GPU stretches keep running until Python resumes.">Abort</button>
     </div>
     <div class="toolbar-models" title="Load Hugging Face checkpoints into the watched script kernel (use the repo id in stonesoup.load_model)">
       <span class="model-repo-combo">
@@ -307,6 +308,7 @@ const fileSelect = app.querySelector<HTMLSelectElement>("#file-select")!;
 const pathInput = app.querySelector<HTMLInputElement>("#path-input")!;
 const btnWatch = app.querySelector<HTMLButtonElement>("#btn-watch")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
+const btnAbort = app.querySelector<HTMLButtonElement>("#btn-abort")!;
 const btnEditorToggle = app.querySelector<HTMLButtonElement>("#btn-editor-toggle")!;
 const modelRepoInput = app.querySelector<HTMLInputElement>("#model-repo-input")!;
 const modelRepoDatalist = app.querySelector<HTMLDataListElement>("#model-repo-datalist")!;
@@ -1179,6 +1181,25 @@ function bringCellToFront(cell: HTMLElement) {
 /** Cell indices currently executing (mirrors `cell-running` on the canvas; pipeline chips sync on rerender). */
 const runningCellIndices = new Set<number>();
 
+/** Heuristic: cooperative abort only runs if user code calls ``check_abort`` (name may be wrong for helpers / imports). */
+function sourceLikelyHasCheckAbort(source: string | undefined): boolean {
+  if (!source) return false;
+  return /\bcheck_abort\b/.test(source);
+}
+
+function anyRunningCellLikelySupportsAbort(): boolean {
+  for (const idx of runningCellIndices) {
+    const src = lastCells.find((c) => c.index === idx)?.source;
+    if (sourceLikelyHasCheckAbort(src)) return true;
+  }
+  return false;
+}
+
+function syncAbortButton() {
+  btnAbort.disabled =
+    runningCellIndices.size === 0 || !anyRunningCellLikelySupportsAbort();
+}
+
 /** In-progress stdout/stderr merged from WebSocket `run_stream` (lost on `renderCells` unless restored). */
 const cellStreamBufferByIndex = new Map<number, string>();
 
@@ -1218,6 +1239,7 @@ function setCellRunningState(index: number, running: boolean) {
     if (running) bringCellToFront(cell);
   }
   applyPipelineChipRunningClassesForIndex(index);
+  syncAbortButton();
 }
 
 
@@ -2833,6 +2855,8 @@ function renderCells(cells: Cell[], path: string | null) {
       });
     });
   }
+
+  syncAbortButton();
 }
 
 function formatOut(o: CellOutput) {
@@ -3359,6 +3383,22 @@ btnCellsAutoLayout.addEventListener("click", () => {
 
 btnWatch.addEventListener("click", () => postWatch());
 btnReset.addEventListener("click", () => resetServer());
+btnAbort.addEventListener("click", () => void postRunAbort());
+
+async function postRunAbort() {
+  try {
+    const r = await fetch(`${apiBase}/api/run/abort`, { method: "POST" });
+    const j = (await readApiJson(r)) as { ok?: boolean; detail?: string; signaled?: boolean };
+    if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : r.statusText);
+    if (j.signaled === false) {
+      setStatus("Abort: no cell run was active.");
+    } else {
+      setStatus("Abort requested…");
+    }
+  } catch (e) {
+    setStatus(String(e));
+  }
+}
 btnEditorToggle.addEventListener("click", () => {
   const next: EditorPref = getEditorPref() === "cursor" ? "vscode" : "cursor";
   setEditorPref(next);

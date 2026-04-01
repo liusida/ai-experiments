@@ -3,11 +3,19 @@
 - ``stonesoup.backend``: FastAPI server, file watcher, in-process kernel.
 - ``stonesoup.frontend``: Vite browser UI (not importable as Python).
 - ``stonesoup.experiment``: helpers for experiment code running *inside* a Stonesoup cell.
+
+Inside a cell, call :func:`check_abort` periodically so the UI **Abort** button can stop long loops.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+
+from stonesoup.backend.kernel import (
+    RunAborted,
+    StonesoupRunCancelled,
+    check_abort,
+)
 
 __version__ = "0.1.0"
 
