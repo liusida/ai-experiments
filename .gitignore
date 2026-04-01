@@ -18,3 +18,5 @@ outputs/stonesoup/
 data/embedding-layers/*.pt
 
 mmstar/
+
+references/
