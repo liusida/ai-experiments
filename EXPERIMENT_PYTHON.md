@@ -35,6 +35,8 @@ Below, **each heading is one feature area**—details for that feature appear **
 
 - **Default:** escaped plain text. For **HTML** or **Markdown**, the **first** line of stdout must be `# stonesoup:render=html` or `# stonesoup:render=md` / `markdown`; then print the body. **No** other stdout before that line (`text` / `auto` = plain, same as skipping the hint).
 - The UI hides the hint in the shown/copied body and offers a chip to flip rich vs plain. Helpers: `stonesoup.STONESOUP_RENDER_HTML`, `STONESOUP_RENDER_MD`, or `stonesoup_render_prefix("html")` (include the newline).
+- If the HTML includes **bitmaps** (`<img>`, CSS `background-image`, etc.), prefer **URLs under `/outputs/…`** (files saved next to `stonesoup.show()` output) rather than **`data:` / base64** blobs—see [Paths and writing outputs](#paths-and-writing-outputs).
+- Cell HTML is **sanitized** (e.g. DOMPurify): rely on **`style` attributes** for layout you need preserved; embedded **`<style>`…`</style>`** blocks are usually **removed or emptied**, so class-only CSS will not apply.
 
 ---
 
@@ -43,6 +45,7 @@ Below, **each heading is one feature area**—details for that feature appear **
 - **`stonesoup.repo_root()`** — repo root (`STONESOUP_ROOT` if set, else editable-install layout). Pair with **`stonesoup.data_dir()`** for `data/` (created automatically).
 - **`stonesoup.plot_dir()`** — save figures you want in the UI: same tree as **`stonesoup.show()`** (`outputs/stonesoup/<repo-relative script path>/`, served as **`/outputs/…`**); created automatically.
 - **`stonesoup.script_dir()`** — folder containing the watched / running `.py` (e.g. stuff you keep next to the script, not under `outputs/`).
+- **HTML with images:** save PNGs (or other static assets) under **`stonesoup.plot_dir()`** (or anywhere under that `outputs/stonesoup/…` tree), build **`src`** as **`"/" + path.relative_to(stonesoup.repo_root()).as_posix()`** (same pattern as `stonesoup.show()`). Optional query (e.g. `?cb=mtime`) avoids stale cache after overwrite. **Do not** embed large **`data:image/...;base64,...`** strings in printed HTML—view-source stays readable, payloads stay smaller, and the browser can cache files like normal HTTP assets.
 
 ---
 
