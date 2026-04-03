@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import keyword
+import logging
 import os
 import re
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -15,6 +16,8 @@ from weakref import WeakKeyDictionary
 
 if TYPE_CHECKING:
     from stonesoup.backend.kernel import Kernel
+
+logger = logging.getLogger(__name__)
 
 
 class ModelLoadRuntimeError(RuntimeError):
@@ -358,8 +361,14 @@ def load_models_into_kernel(
                         repo_id, trust_remote_code=trust_remote_code
                     )
                     tokenizer = getattr(processor, "tokenizer", None)
-                except Exception:
+                except Exception as exc:
                     processor = None
+                    logger.warning(
+                        "AutoProcessor.from_pretrained(%r) failed; using tokenizer only — "
+                        "vision/audio won't work until this is fixed: %s",
+                        repo_id,
+                        exc,
+                    )
             if tokenizer is None:
                 tokenizer = AutoTokenizer.from_pretrained(
                     repo_id, trust_remote_code=trust_remote_code

@@ -1598,25 +1598,34 @@ btnConsoleClear.addEventListener("click", () => {
 
 /** Keepalive for dev proxies (e.g. Vite ``/ws``) that drop idle WebSockets. */
 let wsKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
+/** Pending auto-reconnect from ``onclose``; cleared on every ``connectWs()`` so explicit reconnects (e.g. after reset) are not stomped. */
+let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 function connectWs() {
+  if (wsReconnectTimer != null) {
+    window.clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
   if (wsKeepaliveTimer != null) {
     window.clearInterval(wsKeepaliveTimer);
     wsKeepaliveTimer = null;
   }
   ws?.close();
-  ws = new WebSocket(wsUrl());
-  ws.onopen = () => {
+  const sock = new WebSocket(wsUrl());
+  ws = sock;
+  sock.onopen = () => {
     wsDot.classList.add("on");
     wsDot.title = "Live reload: connected";
     wsDot.setAttribute("aria-label", "WebSocket connected");
     wsKeepaliveTimer = window.setInterval(() => {
-      if (ws != null && ws.readyState === WebSocket.OPEN) {
-        ws.send("ping");
+      if (ws === sock && sock.readyState === WebSocket.OPEN) {
+        sock.send("ping");
       }
     }, 25000);
   };
-  ws.onclose = () => {
+  sock.onclose = () => {
+    /** ``connectWs()`` already replaced ``ws``; do not schedule another reconnect for this dead socket. */
+    if (ws !== sock) return;
     if (wsKeepaliveTimer != null) {
       window.clearInterval(wsKeepaliveTimer);
       wsKeepaliveTimer = null;
@@ -1624,9 +1633,12 @@ function connectWs() {
     wsDot.classList.remove("on");
     wsDot.title = "Live reload: disconnected (retrying…)";
     wsDot.setAttribute("aria-label", "WebSocket disconnected");
-    setTimeout(connectWs, 2000);
+    wsReconnectTimer = window.setTimeout(() => {
+      wsReconnectTimer = null;
+      connectWs();
+    }, 2000);
   };
-  ws.onmessage = (ev) => {
+  sock.onmessage = (ev) => {
     try {
       const data = JSON.parse(ev.data as string) as {
         type?: string;
