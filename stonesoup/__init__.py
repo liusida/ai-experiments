@@ -49,8 +49,15 @@ def script_dir() -> Path:
     return _sd()
 
 
+def outputs_dir() -> Path:
+    """Per-script directory under ``outputs/stonesoup/…`` (HTTP ``/outputs``); see :func:`stonesoup.experiment.paths.outputs_dir`."""
+    from stonesoup.experiment.paths import outputs_dir as _od
+
+    return _od()
+
+
 def plot_dir() -> Path:
-    """``outputs/stonesoup/<script path>/`` (web-served); see :func:`stonesoup.experiment.paths.plot_dir`."""
+    """Synonym for :func:`outputs_dir`; see :func:`stonesoup.experiment.paths.plot_dir`."""
     from stonesoup.experiment.paths import plot_dir as _pd
 
     return _pd()

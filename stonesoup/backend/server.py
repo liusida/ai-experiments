@@ -21,7 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from stonesoup.experiment.paths import repo_root as stonesoup_root
+from stonesoup.experiment.paths import repo_outputs_root, repo_root as stonesoup_root
 
 from stonesoup.backend.hf_models import (
     ModelLoadRuntimeError,
@@ -363,7 +363,7 @@ if _data_images_dir.is_dir():
 else:
     logger.warning("Static data/images directory not found; skipping /data/image mount: %s", _data_images_dir)
 
-_outputs_root = stonesoup_root() / "outputs"
+_outputs_root = repo_outputs_root()
 _stonesoup_cell_out = _outputs_root / "stonesoup"
 try:
     _stonesoup_cell_out.mkdir(parents=True, exist_ok=True)

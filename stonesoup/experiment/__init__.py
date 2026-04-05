@@ -18,6 +18,7 @@ __all__ = [
     "list_hf_hub_cached_repo_ids",
     "list_loaded_models",
     "load_model",
+    "outputs_dir",
     "plot_dir",
     "repo_root",
     "script_dir",
@@ -39,6 +40,10 @@ def __getattr__(name: str) -> _t.Any:
         from stonesoup.experiment.paths import script_dir as _script_dir
 
         return _script_dir
+    if name == "outputs_dir":
+        from stonesoup.experiment.paths import outputs_dir as _outputs_dir
+
+        return _outputs_dir
     if name == "plot_dir":
         from stonesoup.experiment.paths import plot_dir as _plot_dir
 

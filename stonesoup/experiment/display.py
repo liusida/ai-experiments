@@ -7,7 +7,7 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-from .paths import plot_dir, repo_root, script_path
+from .paths import outputs_dir, repo_root, script_path
 
 # Bundled under ``misc/fonts/`` (Noto Sans / Hebrew + Noto Sans CJK). Override with env if needed:
 # STONESOUP_MATPLOTLIB_NOTO_DIR (dir containing NotoSans-*.ttf / Hebrew), STONESOUP_MATPLOTLIB_CJK_FONT (.ttc path).
@@ -126,9 +126,9 @@ def _apply_font_family_to_figure(fig: Any) -> None:
 
 
 def show(fig: Any | None = None, *, dpi: int = 120, format: str = "png", **savefig_kw: Any) -> str:
-    """Save the current (or given) Matplotlib figure using :func:`plot_dir` (``outputs/stonesoup/``) and print HTML.
+    """Save the current (or given) Matplotlib figure using :func:`outputs_dir` (``outputs/stonesoup/…``) and print HTML.
 
-    Same directory as ``plot_dir()`` (``outputs/stonesoup/<repo-relative script path>/``). The
+    Same directory as :func:`outputs_dir` (``outputs/stonesoup/<repo-relative script path>/``). The
     backend serves under ``/outputs/…`` (Vite proxies ``/outputs`` in dev). Stdout starts with
     ``# stonesoup:render=html`` for the following ``<img>`` HTML.
 
@@ -153,7 +153,7 @@ def show(fig: Any | None = None, *, dpi: int = 120, format: str = "png", **savef
         raise TypeError("stonesoup.show() expects a matplotlib.figure.Figure or use the current figure (pass None).")
 
     root = repo_root()
-    out_dir = plot_dir()
+    out_dir = outputs_dir()
 
     fmt = format.lower().lstrip(".")
     if fmt not in ("png", "svg", "pdf", "webp"):

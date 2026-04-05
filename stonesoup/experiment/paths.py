@@ -6,8 +6,19 @@ import inspect
 import os
 from pathlib import Path
 
-# Repo-relative; served under ``/outputs/stonesoup/`` (see ``stonesoup.show`` and backend ``/outputs`` mount).
-CELL_WEB_OUTPUT_SUBPATH = Path("outputs") / "stonesoup"
+# ---------------------------------------------------------------------------
+# Repo layout (see FastAPI ``/outputs`` mount in ``stonesoup.backend.server``)
+# ---------------------------------------------------------------------------
+
+# Directory under :func:`repo_root` served at HTTP ``/outputs``.
+OUTPUTS_SEGMENT = Path("outputs")
+
+# Cell artifacts: ``outputs/stonesoup/<repo-relative script path without .py>/``.
+# Example: ``experiments/Demo/foo.py`` → ``outputs/stonesoup/experiments/Demo/foo``.
+STONESOUP_OUTPUTS_SEGMENT = OUTPUTS_SEGMENT / "stonesoup"
+
+# Back-compat alias (older name referred to plots; use :data:`STONESOUP_OUTPUTS_SEGMENT`).
+CELL_WEB_OUTPUT_SUBPATH = STONESOUP_OUTPUTS_SEGMENT
 
 
 def repo_root() -> Path:
@@ -22,6 +33,13 @@ def repo_root() -> Path:
     if raw:
         return Path(raw).expanduser().resolve()
     return Path(__file__).resolve().parent.parent.parent
+
+
+def repo_outputs_root() -> Path:
+    """``repo_root() / "outputs"`` — directory mounted at HTTP ``/outputs``."""
+    d = repo_root() / OUTPUTS_SEGMENT
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _stonesoup_package_dir() -> Path:
@@ -69,25 +87,34 @@ def script_dir() -> Path:
     return script_path().parent
 
 
-def _plot_segment_relative_to_repo() -> Path:
-    """``outputs/stonesoup/<path/to/script_stem>`` relative to repo root.
-
-    Example: ``experiments/Demo/tmp_1.py`` → ``outputs/stonesoup/experiments/Demo/tmp_1``.
-    """
+def _per_script_outputs_subpath_relative_to_repo() -> Path:
+    """``outputs/stonesoup/<path/to/script_stem>`` relative to repo root."""
     root = repo_root()
     rel_script = script_path().relative_to(root)
-    return CELL_WEB_OUTPUT_SUBPATH / rel_script.with_suffix("")
+    return STONESOUP_OUTPUTS_SEGMENT / rel_script.with_suffix("")
+
+
+def _plot_segment_relative_to_repo() -> Path:
+    """Backward-compat name; same as :func:`_per_script_outputs_subpath_relative_to_repo`."""
+    return _per_script_outputs_subpath_relative_to_repo()
+
+
+def outputs_dir() -> Path:
+    """Per-script directory under ``outputs/stonesoup/`` (mirrors ``__file__`` relative to the repo).
+
+    Use this for any cell-produced files you want under the ``/outputs`` mount (plots, checkpoints,
+    HTML assets, caches, etc.). Same tree as :func:`stonesoup.experiment.display.show`.
+
+    Repo-relative path shape: ``outputs/stonesoup/experiments/…/<stem>/``. Created if missing.
+    """
+    d = repo_root() / _per_script_outputs_subpath_relative_to_repo()
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def plot_dir() -> Path:
-    """Per-script directory under ``outputs/stonesoup/`` (mirrors ``__file__`` relative to the repo).
-
-    Same tree :func:`stonesoup.experiment.display.show` uses. Served under ``/outputs/…``. Created if
-    missing (``mkdir(parents=True, exist_ok=True)``).
-    """
-    d = repo_root() / _plot_segment_relative_to_repo()
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Synonym for :func:`outputs_dir` (historical name: matplotlib figures)."""
+    return outputs_dir()
 
 
 def data_dir() -> Path:
