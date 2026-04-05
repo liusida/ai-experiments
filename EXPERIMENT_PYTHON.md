@@ -44,9 +44,9 @@ Below, **each heading is one feature area**—details for that feature appear **
 ## Paths and writing outputs
 
 - **`stonesoup.repo_root()`** — repo root (`STONESOUP_ROOT` if set, else editable-install layout). Pair with **`stonesoup.data_dir()`** for `data/` (created automatically).
-- **`stonesoup.plot_dir()`** — save figures you want in the UI: same tree as **`stonesoup.show()`** (`outputs/stonesoup/<repo-relative script path>/`, served as **`/outputs/…`**); created automatically.
+- **`stonesoup.outputs_dir()`** — per-script directory under **`outputs/stonesoup/<repo-relative script path>/`** (HTTP **`/outputs/…`**); use for figures, caches, or any cell artifact you want web-addressable. Same path as **`stonesoup.show()`**. **`stonesoup.plot_dir()`** is a synonym (historical name). Created automatically.
 - **`stonesoup.script_dir()`** — folder containing the watched / running `.py` (e.g. stuff you keep next to the script, not under `outputs/`).
-- **HTML with images:** save PNGs (or other static assets) under **`stonesoup.plot_dir()`** (or anywhere under that `outputs/stonesoup/…` tree), build **`src`** as **`"/" + path.relative_to(stonesoup.repo_root()).as_posix()`** (same pattern as `stonesoup.show()`). Optional query (e.g. `?cb=mtime`) avoids stale cache after overwrite. **Do not** embed large **`data:image/...;base64,...`** strings in printed HTML—view-source stays readable, payloads stay smaller, and the browser can cache files like normal HTTP assets.
+- **HTML with images:** save PNGs (or other static assets) under **`stonesoup.outputs_dir()`** (or anywhere under that `outputs/stonesoup/…` tree), build **`src`** as **`"/" + path.relative_to(stonesoup.repo_root()).as_posix()`** (same pattern as `stonesoup.show()`). Optional query (e.g. `?cb=mtime`) avoids stale cache after overwrite. **Do not** embed large **`data:image/...;base64,...`** strings in printed HTML—view-source stays readable, payloads stay smaller, and the browser can cache files like normal HTTP assets.
 
 ---
 
