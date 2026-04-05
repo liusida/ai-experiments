@@ -2,8 +2,9 @@
 
 This layer is separate from ``stonesoup.backend`` (server/kernel implementation) and
 ``stonesoup/frontend`` (browser UI). Import it from notebooks and experiment scripts
-to reduce boilerplate—e.g. resolving models already loaded in the UI without duplicating
-weights. It is only meaningful while a cell is executing under Stonesoup (see each helper's docs).
+to reduce boilerplate—e.g. binding to weights already in the Stonesoup **shared pool** (toolbar **Load**
+or another script) without a second `from_pretrained`. It is only meaningful while a cell is executing
+under Stonesoup (see each helper's docs).
 
 Heavy imports (``models``, ``display.show``) load on first use so ``stonesoup.experiment.paths`` stays
 light for the FastAPI server.
@@ -17,6 +18,7 @@ __all__ = [
     "data_dir",
     "list_hf_hub_cached_repo_ids",
     "list_loaded_models",
+    "list_loaded_models_globally",
     "load_model",
     "outputs_dir",
     "plot_dir",
@@ -60,6 +62,10 @@ def __getattr__(name: str) -> _t.Any:
         from stonesoup.experiment.models import list_loaded_models as _list_lm
 
         return _list_lm
+    if name == "list_loaded_models_globally":
+        from stonesoup.experiment.models import list_loaded_models_globally as _llg
+
+        return _llg
     if name == "list_hf_hub_cached_repo_ids":
         from stonesoup.experiment.models import list_hf_hub_cached_repo_ids as _list_hf
 

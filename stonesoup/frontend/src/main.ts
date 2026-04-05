@@ -242,15 +242,15 @@ app.innerHTML = `
       <button type="button" id="btn-reset" title="Restart the Stonesoup backend (fresh process; reclaims memory)">Reset</button>
       <button type="button" id="btn-abort" disabled title="Cooperative stop (enabled only if this cell’s source contains check_abort — add stonesoup.check_abort() in long loops). Long GPU stretches keep running until Python resumes.">Abort</button>
     </div>
-    <div class="toolbar-models" title="Load Hugging Face checkpoints into the watched script kernel (use the repo id in stonesoup.load_model)">
+    <div class="toolbar-models" title="Load Hugging Face checkpoints; dropdown lists all models in this Stonesoup process. Unload / All remove weights from every open experiment kernel and free memory when nothing references a checkpoint.">
       <span class="model-repo-combo">
         <input type="text" id="model-repo-input" class="model-repo-input" list="model-repo-datalist" spellcheck="false" title="Type a repo id or pick from disk cache / recently loaded" aria-label="Hugging Face model repo id" autocomplete="off" />
         <datalist id="model-repo-datalist"></datalist>
       </span>
       <button type="button" class="primary" id="btn-model-load">Load</button>
-      <select id="models-loaded-select" aria-label="Loaded models" title="Select a model to copy its repo id. With one model, choose — then the model again to copy twice."><option value="">—</option></select>
-      <button type="button" id="btn-model-unload-one" title="Unload the selected model from the kernel">Unload</button>
-      <button type="button" id="btn-model-unload-all" title="Unload every model loaded via Stonesoup for this script">All</button>
+      <select id="models-loaded-select" aria-label="Models in memory" title="Checkpoints loaded in this Stonesoup process. Unload removes the selection from every cached experiment kernel and frees memory when its refcount reaches zero."><option value="">—</option></select>
+      <button type="button" id="btn-model-unload-one" title="Unload this checkpoint from every open experiment; frees memory when nothing still references it">Unload</button>
+      <button type="button" id="btn-model-unload-all" title="Unload every Stonesoup model from every open experiment">All</button>
     </div>
   </div>
   <div class="pipeline-row" id="pipeline-row">
@@ -265,24 +265,24 @@ app.innerHTML = `
       <div class="cells-pan-arena" id="cells-pan-arena"><div class="cells-zoom-wrap" id="cells-zoom-wrap"><div class="cells-canvas" id="cells-canvas"></div></div></div>
     </div>
     <div class="stonesoup-console" id="stonesoup-console">
-      <div class="stonesoup-console-panel" id="stonesoup-console-panel">
-        <div class="stonesoup-console-toolbar">
-          <span class="stonesoup-console-title">Console</span>
+      <div class="stonesoup-console-panel stonesoup-dock-pane" id="stonesoup-console-panel">
+        <div class="stonesoup-console-toolbar stonesoup-dock-toolbar">
+          <span class="stonesoup-console-title stonesoup-dock-title">Console</span>
           <button type="button" class="btn-icon" id="stonesoup-console-clear" title="Clear log">Clear</button>
           <button type="button" class="btn-icon" id="stonesoup-console-collapse" title="Hide console">▾</button>
         </div>
-        <pre class="stonesoup-console-pre" id="stonesoup-console-pre"></pre>
+        <pre class="stonesoup-console-pre stonesoup-dock-body" id="stonesoup-console-pre"></pre>
       </div>
     </div>
     <div class="kernel-vars-dock" id="kernel-vars-dock">
-      <div class="kernel-vars-panel" id="kernel-vars-panel">
-        <div class="kernel-vars-toolbar">
-          <span class="kernel-vars-title">Kernel variables</span>
+      <div class="kernel-vars-panel stonesoup-dock-pane" id="kernel-vars-panel">
+        <div class="kernel-vars-toolbar stonesoup-dock-toolbar">
+          <span class="kernel-vars-title stonesoup-dock-title">Variables</span>
           <button type="button" class="btn-icon" id="kernel-vars-refresh" title="Refresh list">⟳</button>
-          <button type="button" class="btn-icon" id="kernel-vars-collapse" title="Hide panel">▾</button>
+          <button type="button" class="btn-icon" id="kernel-vars-collapse" title="Hide variables">▾</button>
         </div>
-        <div class="kernel-vars-scroll">
-          <table class="kernel-vars-table" aria-label="Kernel variables">
+        <div class="kernel-vars-scroll stonesoup-dock-body">
+          <table class="kernel-vars-table" aria-label="Variables">
             <thead><tr><th>Name</th><th>Type</th><th>Value</th></tr></thead>
             <tbody id="kernel-vars-tbody"></tbody>
           </table>
@@ -291,9 +291,10 @@ app.innerHTML = `
       </div>
       <div class="kernel-vars-dock-bar">
         <button type="button" class="cells-auto-fab" id="btn-cells-auto-layout" title="Discard saved positions and reflow cells into the automatic grid (fixes overlap after output or resize)" aria-label="Automatic cell layout">↻</button>
-        <button type="button" class="cells-auto-fab" id="btn-console-toggle" title="Server log console (stderr/stdout during model load, etc.)" aria-label="Toggle console" aria-expanded="false">&gt;_</button>
         <button type="button" class="cells-auto-fab" id="btn-editor-toggle" data-editor-pref="${getEditorPref()}" title="Switch editor for deeplinks (Cursor / VS Code)">${EDITOR_ICON_CURSOR}${EDITOR_ICON_VSCODE}</button>
-        <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show kernel variables (per script)">
+        <button type="button" class="cells-auto-fab" id="btn-workspace-fullscreen" title="Fullscreen workspace (cells, console, variables)" aria-label="Enter fullscreen" aria-pressed="false"><svg class="fullscreen-icon fullscreen-icon--enter" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg><svg class="fullscreen-icon fullscreen-icon--exit" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm0-6h5V5H5v5zm6 0v5h5v-5h-5zm6-6h-2v5h5V5h-3v2h-2V5z"/></svg></button>
+        <button type="button" class="cells-auto-fab" id="btn-console-toggle" title="Server log console (stderr/stdout during model load, etc.)" aria-label="Toggle console" aria-expanded="false">&gt;_</button>
+        <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show variables (this script)">
           <span class="kernel-vars-chip-icon" aria-hidden="true">{ }</span>
           <span class="kernel-vars-chip-sessions" id="kernel-vars-sessions"></span>
         </button>
@@ -318,6 +319,8 @@ const btnModelUnloadOne = app.querySelector<HTMLButtonElement>("#btn-model-unloa
 const btnModelUnloadAll = app.querySelector<HTMLButtonElement>("#btn-model-unload-all")!;
 const statusToastEl = app.querySelector<HTMLDivElement>("#status-toast")!;
 const btnCellsAutoLayout = app.querySelector<HTMLButtonElement>("#btn-cells-auto-layout")!;
+const workspaceEl = app.querySelector<HTMLDivElement>(".workspace")!;
+const btnWorkspaceFullscreen = app.querySelector<HTMLButtonElement>("#btn-workspace-fullscreen")!;
 const cellsEl = app.querySelector<HTMLDivElement>("#cells")!;
 const cellsPanArena = app.querySelector<HTMLDivElement>("#cells-pan-arena")!;
 const cellsZoomWrap = app.querySelector<HTMLDivElement>("#cells-zoom-wrap")!;
@@ -382,6 +385,15 @@ pathInput.value = defaultPath;
 
 type ScriptFileEntry = { rel: string; label: string; mtime: number };
 type LoadedModelInfo = { name: string; repo_id: string };
+
+type GlobalLoadedModelInfo = {
+  pool_key_b64: string;
+  repo_id: string;
+  model_kind?: string;
+  device_map?: string | null;
+  torch_dtype?: string;
+  trust_remote_code?: boolean;
+};
 
 /** Sentinel: ``*.py`` directly under the list root (group key; not a real folder name). */
 const SCRIPT_PICKER_ROOT_FOLDER = "__ss_root__";
@@ -498,12 +510,32 @@ async function refreshModelRepoSuggestions() {
   fillModelRepoDatalist(mergeModelRepoSuggestions(cached, recent));
 }
 
-function populateModelsLoadedSelect(loaded: LoadedModelInfo[]) {
+function globalChipTitle(g: GlobalLoadedModelInfo): string {
+  const parts = [
+    g.repo_id,
+    g.model_kind && `kind=${g.model_kind}`,
+    g.device_map != null && g.device_map !== "" && `device_map=${g.device_map}`,
+    g.torch_dtype && `dtype=${g.torch_dtype}`,
+    g.trust_remote_code ? "trust_remote_code" : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function globalModelOptionLabel(g: GlobalLoadedModelInfo, disambiguate: boolean): string {
+  if (!disambiguate) return g.repo_id;
+  const bits: string[] = [];
+  if (g.torch_dtype) bits.push(String(g.torch_dtype).replace(/^torch\./, ""));
+  if (g.device_map) bits.push(String(g.device_map));
+  const suffix = bits.length ? ` (${bits.slice(0, 2).join(", ")})` : "";
+  return `${g.repo_id}${suffix}`;
+}
+
+function populateModelsLoadedSelect(rows: GlobalLoadedModelInfo[]) {
   modelsLoadedSelect.replaceChildren();
-  if (!loaded.length) {
+  if (!rows.length) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "No models loaded";
+    opt.textContent = "No models in memory";
     modelsLoadedSelect.appendChild(opt);
     modelsLoadedSelect.disabled = true;
     btnModelUnloadOne.disabled = true;
@@ -515,11 +547,17 @@ function populateModelsLoadedSelect(loaded: LoadedModelInfo[]) {
   placeholder.value = "";
   placeholder.textContent = "—";
   modelsLoadedSelect.appendChild(placeholder);
-  for (const item of loaded) {
+  const repoCounts = new Map<string, number>();
+  for (const g of rows) {
+    repoCounts.set(g.repo_id, (repoCounts.get(g.repo_id) ?? 0) + 1);
+  }
+  for (const g of rows) {
     const opt = document.createElement("option");
-    opt.value = item.name;
-    opt.textContent = item.repo_id;
-    opt.title = `Kernel variable ${item.name} · ${item.repo_id}`;
+    opt.value = g.pool_key_b64;
+    const dup = (repoCounts.get(g.repo_id) ?? 0) > 1;
+    opt.textContent = globalModelOptionLabel(g, dup);
+    opt.title = globalChipTitle(g);
+    opt.dataset.repoId = g.repo_id;
     modelsLoadedSelect.appendChild(opt);
   }
   modelsLoadedSelect.selectedIndex = 0;
@@ -531,8 +569,8 @@ function populateModelsLoadedSelect(loaded: LoadedModelInfo[]) {
 function copyLoadedModelRepoIdToClipboard() {
   const sel = modelsLoadedSelect.selectedOptions[0];
   if (!sel || !sel.value) return;
-  const repoId = sel.textContent?.trim() ?? "";
-  if (!repoId || repoId === "No models loaded") return;
+  const repoId = sel.dataset.repoId?.trim() || sel.textContent?.replace(/\s+\([^)]*\)\s*$/, "").trim() || "";
+  if (!repoId || repoId === "No models in memory") return;
   navigator.clipboard
     .writeText(repoId)
     .then(() => setStatus(`Copied ${repoId}`))
@@ -552,22 +590,45 @@ function setModelLoaderBusy(busy: boolean) {
   }
 }
 
-async function fetchLoadedModels(): Promise<LoadedModelInfo[]> {
+function parseLoadedGlobally(raw: unknown): GlobalLoadedModelInfo[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GlobalLoadedModelInfo[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    if (typeof o.repo_id !== "string" || !o.repo_id.trim()) continue;
+    if (typeof o.pool_key_b64 !== "string" || !o.pool_key_b64.trim()) continue;
+    let device_map: string | null | undefined;
+    if ("device_map" in o) {
+      if (o.device_map === null) device_map = null;
+      else if (o.device_map === undefined) device_map = undefined;
+      else device_map = String(o.device_map);
+    } else {
+      device_map = undefined;
+    }
+    out.push({
+      pool_key_b64: o.pool_key_b64.trim(),
+      repo_id: o.repo_id.trim(),
+      model_kind: typeof o.model_kind === "string" ? o.model_kind : undefined,
+      device_map,
+      torch_dtype: typeof o.torch_dtype === "string" ? o.torch_dtype : undefined,
+      trust_remote_code: typeof o.trust_remote_code === "boolean" ? o.trust_remote_code : undefined,
+    });
+  }
+  return out;
+}
+
+async function fetchLoadedModels(): Promise<GlobalLoadedModelInfo[]> {
   try {
     const r = await fetch(`${apiBase}/api/models`);
-    const j = (await readApiJson(r)) as { loaded?: LoadedModelInfo[]; detail?: string };
+    const j = (await readApiJson(r)) as {
+      loaded_globally?: unknown;
+      detail?: string;
+    };
     if (!r.ok) throw new Error(j.detail || r.statusText);
-    const loaded = Array.isArray(j.loaded)
-      ? j.loaded.filter(
-          (item): item is LoadedModelInfo =>
-            !!item &&
-            typeof item === "object" &&
-            typeof item.name === "string" &&
-            typeof item.repo_id === "string",
-        )
-      : [];
-    populateModelsLoadedSelect(loaded);
-    return loaded;
+    const rows = parseLoadedGlobally(j.loaded_globally);
+    populateModelsLoadedSelect(rows);
+    return rows;
   } catch {
     populateModelsLoadedSelect([]);
     return [];
@@ -1446,11 +1507,6 @@ async function loadModelsFromToolbar() {
       modelRepoInput.value = "";
       return;
     }
-    if (Array.isArray(j.loaded_now)) {
-      populateModelsLoadedSelect(j.loaded_now);
-    } else {
-      await fetchLoadedModels();
-    }
     const loadedNow = Array.isArray(j.loaded) ? j.loaded : [];
     const repos = loadedNow.map((item) => item.repo_id);
     if (repos.length) {
@@ -1470,8 +1526,8 @@ async function loadModelsFromToolbar() {
 }
 
 async function unloadSelectedModelFromToolbar() {
-  const internal = modelsLoadedSelect.value;
-  if (!internal) {
+  const poolKeyB64 = modelsLoadedSelect.value;
+  if (!poolKeyB64) {
     setStatus("Select a loaded model in the list");
     return;
   }
@@ -1480,7 +1536,7 @@ async function unloadSelectedModelFromToolbar() {
     const r = await fetch(`${apiBase}/api/models/unload`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ names: [internal] }),
+      body: JSON.stringify({ pool_keys_b64: [poolKeyB64] }),
     });
     const j = (await readApiJson(r)) as {
       detail?: string;
@@ -1490,8 +1546,12 @@ async function unloadSelectedModelFromToolbar() {
     if (!r.ok) throw new Error(j.detail || r.statusText);
     await fetchKernelVars();
     const unloaded = Array.isArray(j.unloaded) ? j.unloaded : [];
-    const label = unloaded[0]?.repo_id ?? internal;
-    setStatus(unloaded.length ? `Unloaded ${label}` : "Nothing to unload");
+    const label = unloaded[0]?.repo_id ?? "checkpoint";
+    setStatus(
+      unloaded.length
+        ? `Unloaded ${label} globally (${unloaded.length} binding${unloaded.length === 1 ? "" : "s"})`
+        : "That checkpoint had no bindings in any open experiment",
+    );
   } catch (err) {
     setStatus(String(err));
   } finally {
@@ -1516,7 +1576,11 @@ async function unloadAllModelsFromToolbar() {
     if (!r.ok) throw new Error(j.detail || r.statusText);
     await fetchKernelVars();
     const unloaded = Array.isArray(j.unloaded) ? j.unloaded.length : 0;
-    setStatus(unloaded ? `Unloaded ${unloaded} model${unloaded === 1 ? "" : "s"}` : "No models were loaded");
+    setStatus(
+      unloaded
+        ? `Unloaded ${unloaded} binding${unloaded === 1 ? "" : "s"} globally`
+        : "No Stonesoup model bindings in any open experiment",
+    );
   } catch (err) {
     setStatus(String(err));
   } finally {
@@ -1525,25 +1589,39 @@ async function unloadAllModelsFromToolbar() {
   }
 }
 
-function initKernelVarsDock() {
-  const open = kernelVarsStartExpanded();
-  kernelVarsDock.classList.toggle("collapsed", !open);
-  kernelVarsToggle.setAttribute("aria-expanded", open ? "true" : "false");
-  void fetchKernelVars();
+function isVariablesPanelExpanded(): boolean {
+  return !kernelVarsDock.classList.contains("collapsed");
+}
+
+/** Show or hide the Variables bottom pane (shared dock with Console; only one expanded at a time). */
+function setVariablesPanelExpanded(expanded: boolean) {
+  if (expanded) {
+    setConsoleExpanded(false);
+  }
+  kernelVarsDock.classList.toggle("collapsed", !expanded);
+  kernelVarsToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  localStorage.setItem(KERNEL_VARS_EXPANDED_KEY, expanded ? "1" : "0");
+  if (expanded) void fetchKernelVars();
+}
+
+/** Apply prefs; if both saved open, Console wins (single bottom pane). */
+function initBottomDock() {
+  const prefConsole = localStorage.getItem(STONESOUP_CONSOLE_EXPANDED_KEY) === "1";
+  let prefVars = kernelVarsStartExpanded();
+  if (prefConsole && prefVars) {
+    localStorage.setItem(KERNEL_VARS_EXPANDED_KEY, "0");
+    prefVars = false;
+  }
+  setVariablesPanelExpanded(prefVars);
+  setConsoleExpanded(prefConsole);
 }
 
 kernelVarsToggle.addEventListener("click", () => {
-  if (!kernelVarsDock.classList.contains("collapsed")) return;
-  kernelVarsDock.classList.remove("collapsed");
-  kernelVarsToggle.setAttribute("aria-expanded", "true");
-  localStorage.setItem(KERNEL_VARS_EXPANDED_KEY, "1");
-  void fetchKernelVars();
+  setVariablesPanelExpanded(!isVariablesPanelExpanded());
 });
 
 kernelVarsCollapse.addEventListener("click", () => {
-  kernelVarsDock.classList.add("collapsed");
-  kernelVarsToggle.setAttribute("aria-expanded", "false");
-  localStorage.setItem(KERNEL_VARS_EXPANDED_KEY, "0");
+  setVariablesPanelExpanded(false);
 });
 
 kernelVarsRefresh.addEventListener("click", () => void fetchKernelVars());
@@ -1572,16 +1650,15 @@ function clearConsoleBuffer() {
 }
 
 function setConsoleExpanded(expanded: boolean) {
+  if (expanded) {
+    setVariablesPanelExpanded(false);
+  }
   stonesoupConsoleRoot.classList.toggle("stonesoup-console--expanded", expanded);
   localStorage.setItem(STONESOUP_CONSOLE_EXPANDED_KEY, expanded ? "1" : "0");
   btnConsoleToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
   if (expanded) {
     stonesoupConsolePre.scrollTop = stonesoupConsolePre.scrollHeight;
   }
-}
-
-function initStonesoupConsole() {
-  setConsoleExpanded(localStorage.getItem(STONESOUP_CONSOLE_EXPANDED_KEY) === "1");
 }
 
 btnConsoleToggle.addEventListener("click", () => {
@@ -1699,26 +1776,17 @@ function connectWs() {
         }
         scheduleKernelVarsRefresh();
         if (op === "model_load") {
-          void fetchLoadedModels().then((loaded) => {
-            if (ok) {
-              const repos = loaded.map((item) => item.repo_id);
-              if (repos.length) {
-                setStatus(
-                  `Loaded ${repos.length === 1 ? "" : `${repos.length} models: `}${repos.join(", ")}`,
-                );
-                rememberHfRepoIdsLoaded(repos);
-                void refreshModelRepoSuggestions();
-              } else {
-                setStatus("Model load finished");
-              }
-            } else {
-              setStatus(
-                err
-                  ? `Model load failed — ${err.length > 120 ? `${err.slice(0, 120)}…` : err}`
-                  : "Model load failed",
-              );
-            }
-          });
+          void fetchLoadedModels();
+          if (ok) {
+            setStatus("Model load finished");
+            void refreshModelRepoSuggestions();
+          } else {
+            setStatus(
+              err
+                ? `Model load failed — ${err.length > 120 ? `${err.slice(0, 120)}…` : err}`
+                : "Model load failed",
+            );
+          }
         }
       }
     } catch {
@@ -3393,6 +3461,50 @@ btnCellsAutoLayout.addEventListener("click", () => {
   resetCellsToAutoLayout();
 });
 
+type DocumentWithLegacyFs = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void>;
+};
+type ElementWithLegacyFs = Element & {
+  webkitRequestFullscreen?: () => Promise<void>;
+};
+
+function documentFullscreenElement(): Element | null {
+  const d = document as DocumentWithLegacyFs;
+  return document.fullscreenElement ?? d.webkitFullscreenElement ?? null;
+}
+
+function syncWorkspaceFullscreenUi() {
+  const active = documentFullscreenElement() === workspaceEl;
+  btnWorkspaceFullscreen.classList.toggle("is-fullscreen", active);
+  btnWorkspaceFullscreen.setAttribute("aria-pressed", active ? "true" : "false");
+  btnWorkspaceFullscreen.setAttribute("aria-label", active ? "Exit fullscreen" : "Enter fullscreen");
+  btnWorkspaceFullscreen.title = active
+    ? "Exit fullscreen"
+    : "Fullscreen workspace (cells, console, variables)";
+}
+
+document.addEventListener("fullscreenchange", syncWorkspaceFullscreenUi);
+document.addEventListener("webkitfullscreenchange", syncWorkspaceFullscreenUi);
+
+btnWorkspaceFullscreen.addEventListener("click", () => {
+  void (async () => {
+    try {
+      if (documentFullscreenElement() === workspaceEl) {
+        const d = document as DocumentWithLegacyFs;
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else await d.webkitExitFullscreen?.();
+      } else {
+        const w = workspaceEl as HTMLElement & ElementWithLegacyFs;
+        if (w.requestFullscreen) await w.requestFullscreen();
+        else await w.webkitRequestFullscreen?.();
+      }
+    } catch (e) {
+      setStatus(`Fullscreen: ${String(e)}`);
+    }
+  })();
+});
+
 btnWatch.addEventListener("click", () => postWatch());
 btnReset.addEventListener("click", () => resetServer());
 btnAbort.addEventListener("click", () => void postRunAbort());
@@ -4093,8 +4205,7 @@ bindCellsViewportPan();
 bindPipelineDnD();
 bindPipelineChipCanvasHover();
 renderPipelineBar();
-initKernelVarsDock();
-initStonesoupConsole();
+initBottomDock();
 connectWs();
 void fetchLoadedModels();
 void refreshModelRepoSuggestions();

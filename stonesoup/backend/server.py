@@ -11,7 +11,7 @@ import time
 import traceback
 from collections import OrderedDict, defaultdict
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -27,8 +27,13 @@ from stonesoup.backend.hf_models import (
     ModelLoadRuntimeError,
     list_hf_hub_cached_model_repo_ids,
     list_loaded_models,
+    list_loaded_models_globally,
     load_models_into_kernel,
-    unload_models_from_kernel,
+    pool_key_from_b64,
+    release_all_managed_bindings,
+    unload_all_models_from_all_kernels,
+    unload_binding_names_from_all_kernels,
+    unload_pool_keys_from_all_kernels,
 )
 from stonesoup.backend.kernel import Cell, Kernel, parse_cells
 from stonesoup.backend.watcher import FileWatcher
@@ -122,7 +127,11 @@ def _get_or_create_kernel(path: Path) -> Kernel:
     kc = state.kernel_cache
     if key not in kc:
         while len(kc) >= _kernel_cache_max():
-            oldest_key, _ = kc.popitem(last=False)
+            oldest_key, oldest_kernel = kc.popitem(last=False)
+            try:
+                release_all_managed_bindings(oldest_kernel)
+            except Exception:
+                logger.exception("Evicted kernel model cleanup failed for %s", oldest_key)
             logger.info(
                 "Evicted kernel cache for %s (cap=%d)",
                 oldest_key,
@@ -209,6 +218,20 @@ def _kernel_run_lock(path: Path) -> asyncio.Lock:
         lock = asyncio.Lock()
         state.kernel_run_locks[key] = lock
     return lock
+
+
+@asynccontextmanager
+async def _all_kernel_run_locks() -> AsyncIterator[None]:
+    """Hold every cached kernel lock (sorted path keys) so global model unload cannot race cell runs."""
+    keys = sorted(state.kernel_cache.keys())
+    if not keys:
+        yield
+        return
+    async with AsyncExitStack() as stack:
+        for key in keys:
+            lock = _kernel_run_lock(Path(key))
+            await stack.enter_async_context(lock)
+        yield
 
 
 def _changed_cell_indices(old: list[Cell], new: list[Cell]) -> list[int]:
@@ -327,6 +350,8 @@ class ModelsLoadBody(BaseModel):
 
 class ModelsUnloadBody(BaseModel):
     names: list[str] | None = None
+    #: Decoded via :func:`stonesoup.backend.hf_models.pool_key_from_b64`; removes those checkpoints from **every** cached kernel (frees memory when refcounts hit zero).
+    pool_keys_b64: list[str] | None = None
 
 
 @asynccontextmanager
@@ -569,6 +594,7 @@ async def api_models() -> dict:
     return {
         "watched_path": str(watched_path) if watched_path is not None else None,
         "loaded": list_loaded_models(kernel),
+        "loaded_globally": list_loaded_models_globally(),
     }
 
 
@@ -662,18 +688,45 @@ async def api_models_load(body: ModelsLoadBody) -> dict:
 
 @app.post("/api/models/unload")
 async def api_models_unload(body: ModelsUnloadBody) -> dict:
-    if body.names is not None and not body.names:
+    pool_raw = body.pool_keys_b64
+    use_pool = pool_raw is not None and any(str(x).strip() for x in pool_raw)
+    if use_pool:
+        if body.names is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Use either pool_keys_b64 or names, not both.",
+            )
+        decoded: list[str] = []
+        for x in pool_raw or []:
+            s = str(x).strip()
+            if not s:
+                continue
+            try:
+                decoded.append(pool_key_from_b64(s))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not decoded:
+            raise HTTPException(status_code=400, detail="Provide at least one pool_key_b64.")
+    elif body.names is not None and not body.names:
         raise HTTPException(status_code=400, detail="Provide at least one model name or null for all.")
-    watched = _require_watched_path()
-    async with _kernel_run_lock(watched):
-        kernel = _kernel_for_watched_path(watched)
-        if kernel is None:
-            raise HTTPException(status_code=400, detail="Watched file is not available")
+    async with _all_kernel_run_locks():
+        kernels = list(state.kernel_cache.values())
         try:
-            result = await asyncio.to_thread(unload_models_from_kernel, kernel, names=body.names)
+            if kernels:
+                if use_pool:
+                    result = await asyncio.to_thread(unload_pool_keys_from_all_kernels, kernels, decoded)
+                elif body.names is None:
+                    result = await asyncio.to_thread(unload_all_models_from_all_kernels, kernels)
+                else:
+                    result = await asyncio.to_thread(unload_binding_names_from_all_kernels, kernels, body.names)
+            else:
+                result = {"unloaded": [], "missing": []}
         except Exception as exc:
             logger.exception("Failed to unload Hugging Face models")
             raise HTTPException(status_code=500, detail=f"Failed to unload model(s): {exc}") from exc
+        watched_path = state.watched_path.resolve() if state.watched_path is not None and state.watched_path.is_file() else None
+        watched_k = _kernel_for_watched_path(watched_path)
+        result["loaded_now"] = list_loaded_models(watched_k)
     return {"ok": True, **result}
 
 

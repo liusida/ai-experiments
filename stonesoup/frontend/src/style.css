@@ -906,23 +906,30 @@ span.cell-cursor-link--disabled.cell-cursor-link--icon {
   flex: 1 1 0;
   min-height: 0;
   gap: 0;
+  /* Console + Variables: one shared panel system (width + height). */
+  --stonesoup-dock-pane-height: min(280px, 36vh);
+  --stonesoup-dock-pane-min-height: 100px;
+  /* gap below panel + `.kernel-vars-dock-bar` row so Variables can extend over the FABs like Console. */
+  --stonesoup-dock-fab-strip: calc(6px + var(--kernel-dock-bar-height, 32px));
 }
 
-/* Server log strip: WebSocket app_log_* (e.g. tqdm on stderr during Load model). Full width; dock FABs stay above (z-index 45). */
+/* Server log: same horizontal inset as Variables dock; above FAB row (z-index 50). */
 .stonesoup-console {
   position: absolute;
   left: 4px;
   right: 4px;
   bottom: 4px;
-  z-index: 40;
+  z-index: 50;
   pointer-events: none;
 }
 
-.stonesoup-console-panel {
+/* Single panel chrome reused by Console and Variables (see `stonesoup-dock-pane` in markup). */
+.stonesoup-dock-pane {
   pointer-events: auto;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  width: 100%;
   border: 1px solid var(--vs-border);
   border-radius: 6px;
   background: var(--vs-bg-side);
@@ -930,16 +937,16 @@ span.cell-cursor-link--disabled.cell-cursor-link--icon {
     0 4px 24px color-mix(in srgb, #000 28%, transparent),
     0 0 0 1px color-mix(in srgb, var(--vs-border) 50%, transparent);
   overflow: hidden;
-  height: min(240px, 32vh);
-  min-height: 100px;
-  max-height: min(240px, 32vh);
+  height: var(--stonesoup-dock-pane-height);
+  min-height: var(--stonesoup-dock-pane-min-height);
+  max-height: var(--stonesoup-dock-pane-height);
 }
 
 .stonesoup-console:not(.stonesoup-console--expanded) .stonesoup-console-panel {
   display: none;
 }
 
-.stonesoup-console-toolbar {
+.stonesoup-dock-toolbar {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -951,13 +958,14 @@ span.cell-cursor-link--disabled.cell-cursor-link--icon {
   border-radius: 6px 6px 0 0;
 }
 
-.stonesoup-console-title {
+.stonesoup-dock-title {
   flex: 1;
   font-weight: 600;
   color: var(--vs-fg-dim);
 }
 
-.stonesoup-console-pre {
+/* Scrollable mono body: log (`pre`) or variables (`div` + table). */
+.stonesoup-dock-body {
   margin: 0;
   padding: 6px 8px;
   flex: 1 1 auto;
@@ -966,15 +974,20 @@ span.cell-cursor-link--disabled.cell-cursor-link--icon {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.35;
-  white-space: pre-wrap;
-  word-break: break-word;
   color: var(--vs-fg);
   background: color-mix(in srgb, var(--vs-bg-editor) 92%, var(--vs-border));
+}
+
+pre.stonesoup-dock-body {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Auto-layout: sits in .kernel-vars-dock-bar next to { } kernel vars chip (bottom-left stack). */
 .kernel-vars-dock-bar {
   --kernel-dock-bar-height: 32px;
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   flex-direction: row;
   align-items: stretch;
@@ -994,6 +1007,24 @@ span.cell-cursor-link--disabled.cell-cursor-link--icon {
 #btn-console-toggle { font-size: 14px; }
 #btn-editor-toggle[data-editor-pref="cursor"] .editor-icon--cursor { display: inline; }
 #btn-editor-toggle[data-editor-pref="vscode"] .editor-icon--vscode { display: inline; }
+
+#btn-workspace-fullscreen .fullscreen-icon {
+  display: block;
+  flex-shrink: 0;
+}
+#btn-workspace-fullscreen .fullscreen-icon--exit {
+  display: none;
+}
+#btn-workspace-fullscreen.is-fullscreen .fullscreen-icon--enter {
+  display: none;
+}
+#btn-workspace-fullscreen.is-fullscreen .fullscreen-icon--exit {
+  display: block;
+}
+
+.workspace:fullscreen {
+  background-color: var(--vs-bg-editor);
+}
 
 .kernel-vars-dock-bar .kernel-vars-chip {
   align-self: center;
@@ -1604,27 +1635,27 @@ a.toggle.cell-cursor-link:hover {
   box-shadow: 0 0 6px color-mix(in srgb, var(--vs-link) 45%, transparent);
 }
 
-/* --- kernel variables: float over cells (bottom-left), no layout strip --- */
+/* --- Variables + FABs: full width (inset matches `.stonesoup-console`); below console layer --- */
 
 .kernel-vars-dock {
   position: absolute;
   left: 4px;
+  right: 4px;
   bottom: 4px;
   z-index: 45;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 6px;
   pointer-events: none;
-  max-width: min(520px, calc(100% - 12px));
 }
 
 .kernel-vars-dock > * {
   pointer-events: auto;
 }
 
-.kernel-vars-dock:not(.collapsed) {
-  width: min(520px, calc(100% - 12px));
+.kernel-vars-dock.collapsed {
+  align-items: flex-start;
 }
 
 .kernel-vars-dock.collapsed .kernel-vars-panel {
@@ -1635,71 +1666,42 @@ a.toggle.cell-cursor-link:hover {
   display: none;
 }
 
-.kernel-vars-panel {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--vs-border);
-  border-radius: 6px;
-  background: var(--vs-bg-side);
-  box-shadow:
-    0 4px 24px color-mix(in srgb, #000 28%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--vs-border) 50%, transparent);
-  overflow: hidden;
-  /* Fixed height so flex:1 on .kernel-vars-scroll gets space */
-  height: min(260px, 32vh);
-  min-height: 120px;
-  max-height: min(260px, 32vh);
+/* Variables open: same footprint as Console — panel grows through the FAB strip and stacks above it so text is not squeezed above the buttons. */
+.kernel-vars-dock:not(.collapsed) .kernel-vars-panel.stonesoup-dock-pane {
+  position: relative;
+  z-index: 2;
+  height: calc(var(--stonesoup-dock-pane-height) + var(--stonesoup-dock-fab-strip));
+  min-height: calc(var(--stonesoup-dock-pane-min-height) + var(--stonesoup-dock-fab-strip));
+  max-height: calc(var(--stonesoup-dock-pane-height) + var(--stonesoup-dock-fab-strip));
+  margin-bottom: calc(-1 * var(--stonesoup-dock-fab-strip));
 }
 
-.kernel-vars-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--vs-border);
-  font-size: 12px;
-  background: color-mix(in srgb, var(--vs-bg-side) 88%, var(--vs-border));
-  border-radius: 6px 6px 0 0;
-}
-
-.kernel-vars-title {
-  flex: 1;
-  font-weight: 600;
-  color: var(--vs-fg-dim);
-}
-
-.kernel-vars-scroll {
-  overflow: auto;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0 4px 6px;
+/* Console open: hide the >_ launcher (same pattern as hiding { } when Variables is open). */
+.stonesoup-console.stonesoup-console--expanded ~ .kernel-vars-dock #btn-console-toggle {
+  display: none;
 }
 
 .kernel-vars-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: inherit;
 }
 
 .kernel-vars-table th {
   text-align: left;
-  padding: 4px 6px;
+  padding: 2px 4px 6px 4px;
   color: var(--vs-fg-muted);
   font-weight: 600;
   position: sticky;
   top: 0;
-  background: var(--vs-bg-side);
-  border-bottom: 1px solid var(--vs-border);
+  background: color-mix(in srgb, var(--vs-bg-editor) 92%, var(--vs-border));
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 55%, transparent);
 }
 
 .kernel-vars-table td {
-  padding: 3px 6px;
+  padding: 2px 4px;
   vertical-align: top;
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 70%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 35%, transparent);
 }
 
 .kernel-vars-name {
@@ -1725,8 +1727,8 @@ a.toggle.cell-cursor-link:hover {
 }
 
 .kernel-vars-empty {
-  margin: 8px 6px;
-  font-size: 12px;
+  margin: 4px 2px;
+  font: inherit;
   color: var(--vs-fg-muted);
   font-style: italic;
 }
@@ -1765,7 +1767,7 @@ a.toggle.cell-cursor-link:hover {
   flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
-  max-width: min(420px, 72vw);
+  max-width: min(960px, calc(100vw - 96px));
   overflow-x: auto;
   overflow-y: hidden;
   text-align: left;

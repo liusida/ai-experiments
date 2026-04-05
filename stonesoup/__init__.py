@@ -79,10 +79,17 @@ def stonesoup_render_prefix(mode: str) -> str:
 
 
 def list_loaded_models():
-    """Re-export: models loaded in the active Stonesoup kernel (``name`` + ``repo_id`` per row)."""
+    """Re-export: bindings in this script's kernel (``name`` + ``repo_id``); weights may be shared globally."""
     from stonesoup.experiment import list_loaded_models as _list_loaded_models
 
     return _list_loaded_models()
+
+
+def list_loaded_models_globally():
+    """Re-export: every in-memory checkpoint in this Stonesoup process (``pool_key_b64``, ``repo_id``, …)."""
+    from stonesoup.experiment import list_loaded_models_globally as _llg
+
+    return _llg()
 
 
 def list_hf_hub_cached_repo_ids():
@@ -93,7 +100,7 @@ def list_hf_hub_cached_repo_ids():
 
 
 def load_model(ref: str):
-    """Re-export: get an HF bundle inside a Stonesoup cell; loads from hub if needed (repo id with ``/``)."""
+    """Re-export: (model, processor) from the shared pool; adds a binding in this kernel; Hub load if needed."""
     from stonesoup.experiment import load_model as _load_model
 
     return _load_model(ref)

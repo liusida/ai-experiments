@@ -1,14 +1,27 @@
-"""Model handles: tie experiment code to weights loaded in the Stonesoup UI."""
+"""Model handles: experiment code uses the same shared HF weights as the Stonesoup UI."""
 
 from __future__ import annotations
 
 from typing import Any
 
 
-def list_loaded_models() -> list[dict[str, str]]:
-    """Return ``[{name, repo_id}, ...]`` for weights currently loaded into this kernel (toolbar / ``load_model``).
+def list_loaded_models_globally() -> list[dict[str, Any]]:
+    """Return every checkpoint currently resident in this Stonesoup server process (shared pool).
 
-    Outside a Stonesoup cell, ``active_kernel`` is unset and this returns an empty list.
+    Rows include ``pool_key_b64``, ``repo_id``, ``model_kind``, ``torch_dtype``, etc.—the same
+    data that powers the toolbar dropdown. Meaningful only while the Stonesoup backend is running.
+    """
+    from stonesoup.backend.hf_models import list_loaded_models_globally as _lg
+
+    return _lg()
+
+
+def list_loaded_models() -> list[dict[str, str]]:
+    """Return ``[{name, repo_id}, ...]`` for **this script's kernel** bindings to shared weights.
+
+    Weights may already live in the process-wide pool (toolbar **Load**, another file, or an
+    earlier ``load_model``); this lists the names bound into the **current** watched file's
+    namespace only. Outside a Stonesoup cell, ``active_kernel`` is unset and this returns [].
     """
     from stonesoup.backend.hf_models import list_loaded_models as _list
     from stonesoup.backend.kernel import active_kernel
@@ -24,16 +37,18 @@ def list_hf_hub_cached_repo_ids() -> list[str]:
 
 
 def load_model(ref: str) -> tuple[Any, Any]:
-    """Return ``(model, processor)`` for a Stonesoup-managed bundle.
+    """Return ``(model, processor)`` for a Stonesoup-managed bundle (shared in-memory weights).
 
-    ``ref`` may be a Hugging Face repo id (e.g. ``Qwen/Qwen3-VL-8B-Instruct``). If it contains
-    ``/`` and nothing is loaded yet for that id, weights are **loaded into the kernel from this
-    cell** (same path as the toolbar **Load**), then the bundle is returned.
+    Checkpoints live in a **process-wide pool** (toolbar **Load** and cell loads share one copy).
+    ``load_model`` ensures **this script's kernel** has a binding: if the pool already has weights
+    for ``ref``, you get the **same** tensors/tokenizers and only this namespace is updated; if
+    not, it runs the same load path as **Load** (HF Hub), then returns the bundle.
 
-    If ``ref`` has no ``/``, it is the internal kernel binding name only; you must load that name
-    in the UI first (or use the repo id so auto-load can run).
+    ``ref`` with ``/`` is a Hugging Face repo id (e.g. ``Qwen/Qwen3-VL-8B-Instruct``). Without ``/``,
+    ``ref`` is the internal **binding name** only; that name must already exist in this kernel
+    (load the repo id first in the UI or from a cell so auto-bind can run).
 
-    For text-only causal LMs there is no multimodal processor; the second value is the tokenizer.
+    For text-only causal LMs the second value is the tokenizer (no multimodal processor).
     """
     from stonesoup.backend.hf_models import (
         ModelLoadRuntimeError,

@@ -52,16 +52,18 @@ Below, **each heading is one feature area**—details for that feature appear **
 
 ## Hugging Face models
 
-**Goal:** One in-kernel load per checkpoint, then reuse — avoid a second ad-hoc `from_pretrained` for the same weights.
+**Goal:** One **process-wide** copy of each checkpoint (shared pool), with **per-script** Python names bound in each watched file’s kernel — no second ad-hoc `from_pretrained` for the same Hub id and options.
 
 **Prereq:** `load_model` needs **`transformers`** (repo optional **`models`** extra) and **PyTorch** — same environment setup as the rest of this repo; see **[`AGENTS.md`](AGENTS.md)** and **`pyproject.toml`**.
 
-1. **Load weights** (pick one or combine; same kernel, no duplicate object for the same Hub id):
+1. **Load / bind** (toolbar and cells share the same pool):
 
-   * **Toolbar:** **Watch** the script → repo id → **Load**; **Unload** / **All** to free. UI details: [`stonesoup/README.md`](stonesoup/README.md).
-   * **Cell:** `stonesoup.load_model("Org/ModelRepo")` when the string contains **`/`**. If not already loaded, this uses the **same** load path as **Load**; if loaded, returns the **existing** `model` and `processor` (or **tokenizer** for text-only causal LMs).
+   * **Toolbar:** **Watch** a script → repo id → **Load**. The dropdown lists **all** checkpoints in memory for this Stonesoup server (not only the current file). **Unload** drops the selected checkpoint from **every** cached experiment kernel; **All** clears all UI-managed models the same way (memory frees when refcounts hit zero). See [`stonesoup/README.md`](stonesoup/README.md).
+   * **Cell:** `stonesoup.load_model("Org/ModelRepo")` when the string contains **`/`**. If the pool already has those weights, you get the **same** objects and this kernel gains a binding; otherwise the **same** load path as **Load** runs once, then returns `(model, processor)` (or tokenizer for text-only causal LMs).
 
-2. **Example:**
+2. **Introspection:** `stonesoup.list_loaded_models()` lists bindings in **this** file’s kernel; `stonesoup.list_loaded_models_globally()` lists every resident checkpoint (same shapes as the UI/API).
+
+3. **Example:**
 
    ```python
    import stonesoup
