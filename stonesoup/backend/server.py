@@ -307,10 +307,17 @@ async def _broadcast_ws_json(payload: dict[str, Any]) -> None:
 
 
 def _cells_payload() -> dict[str, Any]:
+    # Repo-relative path matches script picker / Stonesoup localStorage keys (not absolute
+    # ``Path`` strings, which broke layout restore on the first refresh after save).
+    rel = (
+        _repo_relative_display(state.watched_path)
+        if state.watched_path and state.watched_path.is_file()
+        else None
+    )
     return {
         "type": "cells",
         "revision": state.revision,
-        "path": str(state.watched_path) if state.watched_path else None,
+        "path": rel,
         "cells": [c.to_dict() for c in state.cells],
         "changed_cell_indices": list(state.last_changed_cell_indices),
     }
@@ -389,9 +396,7 @@ else:
     logger.warning("Static data/images directory not found; skipping /data/image mount: %s", _data_images_dir)
 
 _outputs_root = repo_outputs_root()
-_stonesoup_cell_out = _outputs_root / "stonesoup"
 try:
-    _stonesoup_cell_out.mkdir(parents=True, exist_ok=True)
     app.mount(
         "/outputs",
         StaticFiles(directory=str(_outputs_root.resolve()), check_dir=True),
@@ -479,9 +484,14 @@ async def api_watch(body: WatchBody) -> dict:
 
 @app.get("/api/cells")
 async def api_cells() -> dict:
+    rel = (
+        _repo_relative_display(state.watched_path)
+        if state.watched_path and state.watched_path.is_file()
+        else None
+    )
     return {
         "revision": state.revision,
-        "path": str(state.watched_path) if state.watched_path else None,
+        "path": rel,
         "cells": [c.to_dict() for c in state.cells],
         "changed_cell_indices": list(state.last_changed_cell_indices),
     }

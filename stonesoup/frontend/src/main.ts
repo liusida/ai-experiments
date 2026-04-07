@@ -89,6 +89,16 @@ const CELL_ICON_PYTHON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2
 const CELL_ICON_ADD = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
 const CELL_ICON_RUN_CELL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="currentColor" d="M10.5 9.5 15.5 12l-5 2.5v-5z"/></svg>`;
 
+/** Toolbar watch / server (``currentColor``, 16px). Reset = power (restart server). */
+const TOOLBAR_ICON_WATCH = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s4.25-7 10-7 10 7 10 7-4.25 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor"/></svg>`;
+const TOOLBAR_ICON_RESET = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/></svg>`;
+const TOOLBAR_ICON_ABORT = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>`;
+
+/** Toolbar model controls (``currentColor``, 16px; titles set on the buttons). */
+const TOOLBAR_ICON_MODEL_LOAD = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+const TOOLBAR_ICON_MODEL_UNLOAD = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="m9 9 6 6M15 9l-6 6"/></svg>`;
+const TOOLBAR_ICON_MODEL_UNLOAD_ALL = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="2" width="11" height="11" rx="1.5" stroke-width="1.65"/><path stroke-width="1.65" d="M5 4l7 7M12 4l-7 7"/><rect x="10" y="11" width="11" height="11" rx="1.5" stroke-width="2"/><path stroke-width="2" d="M12 13l7 7M19 13l-7 7"/></svg>`;
+
 /** Manual resize / saved layout: must leave room below `.cell-head` for output */
 const CELL_LAYOUT_MIN_W = 220;
 const CELL_LAYOUT_MIN_H = 200;
@@ -156,13 +166,16 @@ function saveWatchPathCookie(path: string) {
   document.cookie = `${WATCH_PATH_COOKIE}=${encodeURIComponent(t)}; Path=/; Max-Age=${WATCH_PATH_COOKIE_MAX_AGE}; SameSite=Lax`;
 }
 
-/** Per-watched-file cell positions/sizes; one cookie JSON object keyed by repo-relative path */
-const CELL_LAYOUTS_COOKIE = "stonesoup_cell_layouts_v1";
+/** Legacy: layouts lived in a single cookie (~4 KB cap — saves failed silently, so F5 lost positions). */
+const CELL_LAYOUTS_LEGACY_COOKIE = "stonesoup_cell_layouts_v1";
+/** Per-watched-file cell geometry; keyed by repo-relative path (same shape as the old cookie). */
+const CELL_LAYOUTS_LS_KEY = "stonesoup_cell_layouts_v2";
+const CELL_LAYOUTS_LEGACY_MIGRATED_KEY = "stonesoup_cell_layouts_legacy_cookie_imported";
 type CellLayoutTuple = [number, number, number, number];
 type CellLayoutsFileMap = Record<string, CellLayoutTuple>;
 
-function parseCellLayoutsCookie(): Record<string, CellLayoutsFileMap> {
-  const prefix = `${CELL_LAYOUTS_COOKIE}=`;
+function parseLegacyLayoutsCookie(): Record<string, CellLayoutsFileMap> {
+  const prefix = `${CELL_LAYOUTS_LEGACY_COOKIE}=`;
   for (const part of document.cookie.split(";")) {
     const s = part.trim();
     if (!s.startsWith(prefix)) continue;
@@ -175,27 +188,79 @@ function parseCellLayoutsCookie(): Record<string, CellLayoutsFileMap> {
   return {};
 }
 
-function writeCellLayoutsCookie(all: Record<string, CellLayoutsFileMap>) {
-  document.cookie = `${CELL_LAYOUTS_COOKIE}=${encodeURIComponent(JSON.stringify(all))}; Path=/; Max-Age=${WATCH_PATH_COOKIE_MAX_AGE}; SameSite=Lax`;
+function readCellLayoutsStore(): Record<string, CellLayoutsFileMap> {
+  try {
+    const raw = localStorage.getItem(CELL_LAYOUTS_LS_KEY);
+    if (raw) {
+      const x = JSON.parse(raw) as unknown;
+      if (x && typeof x === "object" && !Array.isArray(x)) {
+        return x as Record<string, CellLayoutsFileMap>;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  if (localStorage.getItem(CELL_LAYOUTS_LEGACY_MIGRATED_KEY) !== "1") {
+    const fromCookie = parseLegacyLayoutsCookie();
+    try {
+      if (Object.keys(fromCookie).length > 0) {
+        localStorage.setItem(CELL_LAYOUTS_LS_KEY, JSON.stringify(fromCookie));
+        document.cookie = `${CELL_LAYOUTS_LEGACY_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+      }
+      localStorage.setItem(CELL_LAYOUTS_LEGACY_MIGRATED_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    return fromCookie;
+  }
+  return {};
+}
+
+function writeCellLayoutsStore(all: Record<string, CellLayoutsFileMap>) {
+  try {
+    localStorage.setItem(CELL_LAYOUTS_LS_KEY, JSON.stringify(all));
+  } catch {
+    /* quota */
+  }
 }
 
 
 function resetCellsToAutoLayout(): void {
+  pendingUserAutoLayout = true;
   manualLayoutByCellIdx.clear();
   cellPositions.clear();
   lastLayoutCols = -1;
   const pathKey = layoutStoragePath();
   if (pathKey && pathKey !== "_unset") {
-    const all = parseCellLayoutsCookie();
+    const all = readCellLayoutsStore();
     delete all[pathKey];
-    writeCellLayoutsCookie(all);
+    writeCellLayoutsStore(all);
   }
   applyFloatingLayout();
   setStatus("Cells: automatic layout");
 }
 
+/**
+ * Repo-relative path for localStorage — must match script picker values.
+ * Older backends sent absolute ``path`` in API/WebSocket; normalize so the first refresh finds saved layouts.
+ */
+function persistPathKey(pathFromServer: string | null | undefined): string {
+  const fromInput = pathInput.value.trim().replace(/\\/g, "/");
+  if (fromInput) return fromInput.replace(/^\.\//, "");
+  const s = (pathFromServer ?? "").trim().replace(/\\/g, "/");
+  if (!s) return "";
+  if (!s.startsWith("/") && !/^[A-Za-z]:/.test(s)) return s.replace(/^\.\//, "");
+  const low = s.toLowerCase();
+  const i = low.indexOf("/experiments/");
+  if (i >= 0) return s.slice(i + 1);
+  const segs = s.split("/").filter(Boolean);
+  if (segs.length >= 2) return segs.slice(-2).join("/");
+  return segs[segs.length - 1] ?? "";
+}
+
 function layoutStoragePath(): string {
-  return pathInput.value.trim() || lastPath || "_unset";
+  const k = persistPathKey(pathInput.value.trim() || lastPath || null);
+  return k || "_unset";
 }
 
 let saveCellLayoutTimer = 0;
@@ -216,9 +281,9 @@ function scheduleSaveCellLayouts() {
         Math.round(el.offsetHeight),
       ];
     }
-    const all = parseCellLayoutsCookie();
+    const all = readCellLayoutsStore();
     all[pathKey] = rec;
-    writeCellLayoutsCookie(all);
+    writeCellLayoutsStore(all);
   }, 250);
 }
 
@@ -238,19 +303,19 @@ app.innerHTML = `
         <select id="file-select" title="Python file in folder" aria-label="File"></select>
       </span>
       <input type="hidden" id="path-input" />
-      <button type="button" class="primary" id="btn-watch">Watch</button>
-      <button type="button" id="btn-reset" title="Restart the Stonesoup backend (fresh process; reclaims memory)">Reset</button>
-      <button type="button" id="btn-abort" disabled title="Cooperative stop (enabled only if this cell’s source contains check_abort — add stonesoup.check_abort() in long loops). Long GPU stretches keep running until Python resumes.">Abort</button>
+      <button type="button" class="primary btn-icon" id="btn-watch" title="Watch selected Python file (live cells and reload)" aria-label="Watch">${TOOLBAR_ICON_WATCH}</button>
+      <button type="button" class="btn-icon" id="btn-reset" title="Restart the Stonesoup backend (fresh process; reclaims memory)" aria-label="Restart server">${TOOLBAR_ICON_RESET}</button>
+      <button type="button" class="btn-icon" id="btn-abort" disabled title="Cooperative stop (enabled only if this cell’s source contains check_abort — add stonesoup.check_abort() in long loops). Long GPU stretches keep running until Python resumes." aria-label="Abort cell">${TOOLBAR_ICON_ABORT}</button>
     </div>
     <div class="toolbar-models" title="Load Hugging Face checkpoints; dropdown lists all models in this Stonesoup process. Unload / All remove weights from every open experiment kernel and free memory when nothing references a checkpoint.">
       <span class="model-repo-combo">
         <input type="text" id="model-repo-input" class="model-repo-input" list="model-repo-datalist" spellcheck="false" title="Type a repo id or pick from disk cache / recently loaded" aria-label="Hugging Face model repo id" autocomplete="off" />
         <datalist id="model-repo-datalist"></datalist>
       </span>
-      <button type="button" class="primary" id="btn-model-load">Load</button>
+      <button type="button" class="primary btn-icon" id="btn-model-load" title="Load Hugging Face model from repo id above" aria-label="Load model">${TOOLBAR_ICON_MODEL_LOAD}</button>
       <select id="models-loaded-select" aria-label="Models in memory" title="Checkpoints loaded in this Stonesoup process. Unload removes the selection from every cached experiment kernel and frees memory when its refcount reaches zero."><option value="">—</option></select>
-      <button type="button" id="btn-model-unload-one" title="Unload this checkpoint from every open experiment; frees memory when nothing still references it">Unload</button>
-      <button type="button" id="btn-model-unload-all" title="Unload every Stonesoup model from every open experiment">All</button>
+      <button type="button" class="btn-icon" id="btn-model-unload-one" title="Unload this checkpoint from every open experiment; frees memory when nothing still references it" aria-label="Unload selected model">${TOOLBAR_ICON_MODEL_UNLOAD}</button>
+      <button type="button" class="btn-icon" id="btn-model-unload-all" title="Unload every Stonesoup model from every open experiment" aria-label="Unload all models">${TOOLBAR_ICON_MODEL_UNLOAD_ALL}</button>
     </div>
   </div>
   <div class="pipeline-row" id="pipeline-row">
@@ -290,7 +355,7 @@ app.innerHTML = `
         </div>
       </div>
       <div class="kernel-vars-dock-bar">
-        <button type="button" class="cells-auto-fab" id="btn-cells-auto-layout" title="Discard saved positions and reflow cells into the automatic grid (fixes overlap after output or resize)" aria-label="Automatic cell layout">↻</button>
+        <button type="button" class="cells-auto-fab" id="btn-cells-auto-layout" title="Auto layout: discard saved positions/sizes and reflow into the default grid" aria-label="Auto layout">↻</button>
         <button type="button" class="cells-auto-fab" id="btn-editor-toggle" data-editor-pref="${getEditorPref()}" title="Switch editor for deeplinks (Cursor / VS Code)">${EDITOR_ICON_CURSOR}${EDITOR_ICON_VSCODE}</button>
         <button type="button" class="cells-auto-fab" id="btn-workspace-fullscreen" title="Fullscreen workspace (cells, console, variables)" aria-label="Enter fullscreen" aria-pressed="false"><svg class="fullscreen-icon fullscreen-icon--enter" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg><svg class="fullscreen-icon fullscreen-icon--exit" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm0-6h5V5H5v5zm6 0v5h5v-5h-5zm6-6h-2v5h5V5h-3v2h-2V5z"/></svg></button>
         <button type="button" class="cells-auto-fab" id="btn-console-toggle" title="Server log console (stderr/stdout during model load, etc.)" aria-label="Toggle console" aria-expanded="false">&gt;_</button>
@@ -484,6 +549,26 @@ function mergeModelRepoSuggestions(cached: string[], recent: string[]): string[]
   return out;
 }
 
+/**
+ * Minimum width for the repo combo (``ch``). Longest datalist id / typed value is scaled—``ch`` matches
+ * “0” width and is a bit thin for mixed repo slugs.
+ */
+const MODEL_REPO_WIDTH_MIN_CH = 20;
+const MODEL_REPO_WIDTH_MAX_CH = 20;
+const MODEL_REPO_WIDTH_PAD_CH = 4;
+const MODEL_REPO_WIDTH_CH_SCALE = 1.14;
+
+function syncModelRepoInputWidthCh() {
+  let maxChars = modelRepoInput.value.length;
+  for (const o of modelRepoDatalist.querySelectorAll("option")) {
+    maxChars = Math.max(maxChars, (o as HTMLOptionElement).value.length);
+  }
+  const raw = Math.ceil(Math.max(maxChars, 1) * MODEL_REPO_WIDTH_CH_SCALE) + MODEL_REPO_WIDTH_PAD_CH;
+  const ch = Math.min(MODEL_REPO_WIDTH_MAX_CH, Math.max(MODEL_REPO_WIDTH_MIN_CH, raw));
+  const combo = modelRepoInput.closest(".model-repo-combo") as HTMLElement | null;
+  if (combo) combo.style.minWidth = `${ch}ch`;
+}
+
 function fillModelRepoDatalist(repoIds: string[]) {
   modelRepoDatalist.replaceChildren();
   for (const id of repoIds) {
@@ -491,6 +576,7 @@ function fillModelRepoDatalist(repoIds: string[]) {
     opt.value = id;
     modelRepoDatalist.appendChild(opt);
   }
+  syncModelRepoInputWidthCh();
 }
 
 async function refreshModelRepoSuggestions() {
@@ -786,6 +872,7 @@ async function populateScriptPicker() {
       const match = entries.find((e) => e.rel === want);
       if (match) {
         fileSelect.value = match.rel;
+        pathInput.value = match.rel;
       } else if (entries.length > 0) {
         const pick = pickLatestFileEntry(entries)!;
         fileSelect.value = pick.rel;
@@ -920,6 +1007,7 @@ function pruneOutputsForCellCount(cellCount: number) {
   for (const k of [...cellStdoutPlainText.keys()]) {
     if (!Number.isInteger(k) || k < 0 || k >= cellCount) cellStdoutPlainText.delete(k);
   }
+  schedulePersistOutputs();
 }
 
 function pruneStaleCells(cellCount: number) {
@@ -929,12 +1017,12 @@ function pruneStaleCells(cellCount: number) {
 }
 /** Last-known cell geometry for reflow heuristics; cleared when watched path or cell count changes. */
 const cellPositions = new Map<number, { left: number; top: number }>();
-/** When non-empty, canvas uses saved left/top/width/height per file cell index (from cookie or after drag). */
+/** When non-empty, canvas uses saved left/top/width/height per file cell index (from localStorage or after drag). */
 const manualLayoutByCellIdx = new Map<number, { left: number; top: number; width: number; height: number }>();
 function loadManualLayoutsForPath(pathKey: string) {
-  manualLayoutByCellIdx.clear();
   if (!pathKey || pathKey === "_unset") return;
-  const all = parseCellLayoutsCookie();
+  manualLayoutByCellIdx.clear();
+  const all = readCellLayoutsStore();
   const rec = all[pathKey];
   if (!rec) return;
   for (const [k, v] of Object.entries(rec)) {
@@ -961,8 +1049,85 @@ function snapshotCurrentLayoutToManualMap() {
 }
 let lastLayoutPath = "";
 let lastLayoutCount = -1;
-/** Last grid column count used for auto layout; when viewport changes columns, we reflow the grid. */
+/** Last grid column count used when computing default grid geometry (no reflow on resize unless user clicks auto-layout). */
 let lastLayoutCols = -1;
+
+/** True after path/cell-count change when no saved layout exists — run default grid once, then persist. */
+let needsDefaultCellGrid = false;
+/** True when user clicked “automatic cell layout” — discard saved layout and run default grid once. */
+let pendingUserAutoLayout = false;
+
+const CELL_OUTPUTS_LS_KEY = "stonesoup_cell_outputs_v1";
+type CellOutputsFileMap = Record<string, CellOutput>;
+
+function parseCellOutputsStore(): Record<string, CellOutputsFileMap> {
+  try {
+    const raw = localStorage.getItem(CELL_OUTPUTS_LS_KEY);
+    if (!raw) return {};
+    const x = JSON.parse(raw) as unknown;
+    if (x && typeof x === "object" && !Array.isArray(x)) return x as Record<string, CellOutputsFileMap>;
+  } catch {
+    /* ignore */
+  }
+  return {};
+}
+
+function writeCellOutputsStore(all: Record<string, CellOutputsFileMap>) {
+  try {
+    localStorage.setItem(CELL_OUTPUTS_LS_KEY, JSON.stringify(all));
+  } catch {
+    /* quota or private mode */
+  }
+}
+
+let saveOutputsTimer = 0;
+function schedulePersistOutputs() {
+  window.clearTimeout(saveOutputsTimer);
+  saveOutputsTimer = window.setTimeout(() => {
+    saveOutputsTimer = 0;
+    const pathKey = layoutStoragePath();
+    if (!pathKey || pathKey === "_unset") return;
+    const rec: CellOutputsFileMap = {};
+    for (const [k, v] of outputs) {
+      rec[String(k)] = v;
+    }
+    const all = parseCellOutputsStore();
+    all[pathKey] = rec;
+    writeCellOutputsStore(all);
+  }, 300);
+}
+
+function loadOutputsForPath(pathKey: string) {
+  if (!pathKey || pathKey === "_unset") return;
+  const all = parseCellOutputsStore();
+  const rec = all[pathKey];
+  if (!rec) return;
+  for (const [k, v] of Object.entries(rec)) {
+    const idx = Number(k);
+    if (!Number.isInteger(idx)) continue;
+    if (!v || typeof v !== "object") continue;
+    const o = v as Record<string, unknown>;
+    const out: CellOutput = {
+      stdout: String(o.stdout ?? ""),
+      stderr: String(o.stderr ?? ""),
+      ok: Boolean(o.ok),
+    };
+    const rh = o.renderHint;
+    if (rh === "html" || rh === "markdown" || rh === "text") {
+      out.renderHint = rh as StdoutKind;
+    }
+    const ds = o.durationSec;
+    if (typeof ds === "number" && Number.isFinite(ds)) out.durationSec = ds;
+    outputs.set(idx, out);
+  }
+}
+
+function clearPersistedOutputsForPath(pathKey: string) {
+  if (!pathKey || pathKey === "_unset") return;
+  const all = parseCellOutputsStore();
+  delete all[pathKey];
+  writeCellOutputsStore(all);
+}
 
 /** Tree: cells and nested loops (each loop has its own iteration list). */
 type PipelineStep =
@@ -1314,7 +1479,7 @@ function prepareCellStreamUi(index: number) {
   }
   setCellOutputBlockVisible(index, true);
   syncCellCompactClassForIndex(index);
-  applyFloatingLayout();
+  scheduleLayoutAndLines();
 }
 
 function appendCellStreamChunk(index: number, text: string) {
@@ -1358,10 +1523,14 @@ function applyCellsFromServer(
   }
   revision = data.revision;
   const cells = Array.isArray(data.cells) ? data.cells.map(cellFromApiPayload) : [];
+  if (pathChanged) {
+    const outPersistKey = persistPathKey(incomingPath ?? (pathInput.value.trim() || null));
+    if (outPersistKey) loadOutputsForPath(outPersistKey);
+  }
   if (!pathChanged && !opts?.forceResetOutputs) {
-    pruneOutputsForCellCount(cells.length);
     pruneStaleCells(cells.length);
   }
+  pruneOutputsForCellCount(cells.length);
   const changed = data.changed_cell_indices;
   const revKey =
     typeof data.revision === "number" && Number.isFinite(data.revision) ? data.revision : Number(data.revision) || 0;
@@ -1378,6 +1547,7 @@ function applyCellsFromServer(
   }
   try {
     renderCells(cells, incomingPath);
+    schedulePersistOutputs();
   } catch (err) {
     console.error("stonesoup: renderCells failed", err);
     setStatus(`Cell UI error: ${String(err)}`);
@@ -1866,6 +2036,81 @@ function relayoutCanvasBounds() {
   cellsCanvas.style.minHeight = `${minH}px`;
   cellsCanvas.style.minWidth = `${minW}px`;
   applyCellsZoomLayout();
+}
+
+/** Per watched file: zoom scale and ``.cells`` scroll offsets (pan position). */
+const CELLS_VIEW_LS_KEY = "stonesoup_cells_view_v1";
+type CellsViewSnapshot = { scale: number; scrollLeft: number; scrollTop: number };
+
+function parseCellsViewStore(): Record<string, CellsViewSnapshot> {
+  try {
+    const raw = localStorage.getItem(CELLS_VIEW_LS_KEY);
+    if (!raw) return {};
+    const x = JSON.parse(raw) as unknown;
+    if (x && typeof x === "object" && !Array.isArray(x)) return x as Record<string, CellsViewSnapshot>;
+  } catch {
+    /* ignore */
+  }
+  return {};
+}
+
+function writeCellsViewStore(all: Record<string, CellsViewSnapshot>) {
+  try {
+    localStorage.setItem(CELLS_VIEW_LS_KEY, JSON.stringify(all));
+  } catch {
+    /* quota */
+  }
+}
+
+function readCellsViewForPath(pathKey: string): CellsViewSnapshot | null {
+  if (!pathKey || pathKey === "_unset") return null;
+  const raw = parseCellsViewStore()[pathKey];
+  if (!raw || typeof raw !== "object") return null;
+  const scale = Number(raw.scale);
+  const scrollLeft = Number(raw.scrollLeft);
+  const scrollTop = Number(raw.scrollTop);
+  if (!Number.isFinite(scale) || !Number.isFinite(scrollLeft) || !Number.isFinite(scrollTop)) return null;
+  return { scale, scrollLeft, scrollTop };
+}
+
+let cellsViewSaveTimer = 0;
+function schedulePersistCellsView() {
+  window.clearTimeout(cellsViewSaveTimer);
+  cellsViewSaveTimer = window.setTimeout(() => {
+    cellsViewSaveTimer = 0;
+    const pathKey = layoutStoragePath();
+    if (!pathKey || pathKey === "_unset") return;
+    const all = parseCellsViewStore();
+    all[pathKey] = {
+      scale: cellsViewScale,
+      scrollLeft: cellsEl.scrollLeft,
+      scrollTop: cellsEl.scrollTop,
+    };
+    writeCellsViewStore(all);
+  }, 200);
+}
+
+/** Restore zoom + scroll for ``pathKey`` after layout; returns false if nothing saved. */
+function applySavedCellsView(pathKey: string): boolean {
+  const saved = readCellsViewForPath(pathKey);
+  if (!saved) return false;
+  cellsViewScale = Math.min(CELLS_ZOOM_MAX, Math.max(CELLS_ZOOM_MIN, saved.scale));
+  applyCellsZoomLayout();
+  relayoutCanvasBounds();
+  const sl = saved.scrollLeft;
+  const st = saved.scrollTop;
+  requestAnimationFrame(() => {
+    const maxL = Math.max(0, cellsEl.scrollWidth - cellsEl.clientWidth);
+    const maxT = Math.max(0, cellsEl.scrollHeight - cellsEl.clientHeight);
+    cellsEl.scrollLeft = Math.min(Math.max(0, sl), maxL);
+    cellsEl.scrollTop = Math.min(Math.max(0, st), maxT);
+    requestAnimationFrame(() => {
+      cellsEl.scrollLeft = Math.min(Math.max(0, sl), maxL);
+      cellsEl.scrollTop = Math.min(Math.max(0, st), maxT);
+      schedulePersistCellsView();
+    });
+  });
+  return true;
 }
 
 function flattenCellIndices(steps: PipelineStep[]): number[] {
@@ -2652,7 +2897,9 @@ function scheduleLayoutAndLines() {
 function computeCellGridParams(): { pad: number; gap: number; cellW: number; cols: number } {
   const pad = 12;
   const gap = 28;
-  const viewportW = cellsEl.clientWidth;
+  /** Cell geometry is in canvas logical px; viewport is CSS px on the scaled zoom-wrap → divide by zoom. */
+  const s = cellsViewScale > 0 ? cellsViewScale : 1;
+  const viewportW = cellsEl.clientWidth / s;
   const usableW = Math.max(240, viewportW - 2 * pad);
   let cellW = Math.min(520, Math.max(260, Math.min(440, usableW)));
   let cols = Math.max(1, Math.floor((usableW + gap) / (cellW + gap)));
@@ -2693,29 +2940,44 @@ function syncCellPositionsFromDom(nodes: HTMLElement[]) {
   });
 }
 
+/** Pack cells into the default grid once, then snapshot into ``manualLayoutByCellIdx`` and cookie (stable across reload/live parse until user clicks auto-layout). */
+function placeDefaultGridAndPersist() {
+  const { pad, gap, cellW, cols } = computeCellGridParams();
+  const nodes = [...cellsCanvas.querySelectorAll<HTMLElement>(".cell[data-pipeline-cell-drag]")];
+  lastLayoutCols = cols;
+  nodes.forEach((cell, i) => {
+    cell.classList.remove("cell-custom-geometry");
+    cell.dataset.cellIndex = String(i);
+    cell.style.width = `${cellW}px`;
+    cell.style.height = "";
+    cell.style.minHeight = "";
+    cell.style.left = `${pad + (i % cols) * (cellW + gap)}px`;
+    cell.style.top = `${pad}px`;
+  });
+  requestAnimationFrame(() => {
+    packGridRows(nodes, cols, cellW, pad, gap);
+    syncCellPositionsFromDom(nodes);
+    snapshotCurrentLayoutToManualMap();
+    scheduleSaveCellLayouts();
+    scheduleLayoutAndLines();
+  });
+}
+
 function applyFloatingLayout() {
   const { pad, gap, cellW, cols } = computeCellGridParams();
   const nodes = [...cellsCanvas.querySelectorAll<HTMLElement>(".cell[data-pipeline-cell-drag]")];
-  if (manualLayoutByCellIdx.size === 0) {
-    const needHorizontalReflow = lastLayoutCols !== cols || cellPositions.size === 0;
-    if (needHorizontalReflow) {
-      lastLayoutCols = cols;
+  if (manualLayoutByCellIdx.size === 0 && nodes.length > 0) {
+    if (!(needsDefaultCellGrid || pendingUserAutoLayout)) {
+      loadManualLayoutsForPath(layoutStoragePath());
     }
-    nodes.forEach((cell, i) => {
-      cell.classList.remove("cell-custom-geometry");
-      cell.dataset.cellIndex = String(i);
-      cell.style.width = `${cellW}px`;
-      cell.style.height = "";
-      cell.style.minHeight = "";
-      cell.style.left = `${pad + (i % cols) * (cellW + gap)}px`;
-      cell.style.top = `${pad}px`;
-    });
-    requestAnimationFrame(() => {
-      packGridRows(nodes, cols, cellW, pad, gap);
-      syncCellPositionsFromDom(nodes);
-      scheduleLayoutAndLines();
-    });
-    return;
+    if (manualLayoutByCellIdx.size === 0) {
+      placeDefaultGridAndPersist();
+      needsDefaultCellGrid = false;
+      pendingUserAutoLayout = false;
+      return;
+    }
+    needsDefaultCellGrid = false;
+    pendingUserAutoLayout = false;
   }
 
   lastLayoutCols = cols;
@@ -2782,7 +3044,7 @@ function renderCells(cells: Cell[], path: string | null) {
       if (!p) {
         manualLayoutByCellIdx.clear();
       } else {
-        loadManualLayoutsForPath(p);
+        loadManualLayoutsForPath(layoutStoragePath());
       }
       pipelines = loadPipelines(cells.length);
       if (pipelines.length === 0) pipelines = [[]];
@@ -2797,6 +3059,9 @@ function renderCells(cells: Cell[], path: string | null) {
     }
     lastLayoutPath = p;
     lastLayoutCount = cells.length;
+    if (cells.length > 0 && manualLayoutByCellIdx.size === 0) {
+      needsDefaultCellGrid = true;
+    }
   }
 
   const validCellIdx = new Set(cells.map((c) => c.index));
@@ -2927,11 +3192,23 @@ function renderCells(cells: Cell[], path: string | null) {
   if (pathChangedForScrollReset) {
     const g = CELLS_PAN_GUTTER_PX;
     requestAnimationFrame(() => {
-      cellsEl.scrollLeft = g;
-      cellsEl.scrollTop = g;
       requestAnimationFrame(() => {
-        cellsEl.scrollLeft = g;
-        cellsEl.scrollTop = g;
+        requestAnimationFrame(() => {
+          if (layoutStoragePath() !== "_unset" && applySavedCellsView(layoutStoragePath())) {
+            return;
+          }
+          cellsViewScale = 1;
+          applyCellsZoomLayout();
+          relayoutCanvasBounds();
+          requestAnimationFrame(() => {
+            cellsEl.scrollLeft = g;
+            cellsEl.scrollTop = g;
+            requestAnimationFrame(() => {
+              cellsEl.scrollLeft = g;
+              cellsEl.scrollTop = g;
+            });
+          });
+        });
       });
     });
   }
@@ -3175,15 +3452,12 @@ async function postWatch() {
     if (!r.ok) throw new Error(j.detail || r.statusText);
     saveWatchPathCookie(path);
     if (Array.isArray(j.cells)) {
-      applyCellsFromServer(
-        {
-          revision: Number(j.revision) || 0,
-          path: typeof j.path === "string" || j.path === null ? j.path : null,
-          cells: j.cells,
-          changed_cell_indices: j.changed_cell_indices,
-        },
-        { forceResetOutputs: true },
-      );
+      applyCellsFromServer({
+        revision: Number(j.revision) || 0,
+        path: typeof j.path === "string" || j.path === null ? j.path : null,
+        cells: j.cells,
+        changed_cell_indices: j.changed_cell_indices,
+      });
     } else {
       outputs.clear();
       cellStdoutPlainText.clear();
@@ -3252,7 +3526,8 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
       }
     }
     syncCellCompactClassForIndex(index);
-    applyFloatingLayout();
+    schedulePersistOutputs();
+    scheduleLayoutAndLines();
     if (!j.ok) {
       const line =
         nextOut.stderr.trim().split("\n")[0] || nextOut.stdout.trim().split("\n")[0] || "";
@@ -3280,7 +3555,8 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
       syncOutLabelRowForCell(index);
     }
     syncCellCompactClassForIndex(index);
-    applyFloatingLayout();
+    schedulePersistOutputs();
+    scheduleLayoutAndLines();
   } finally {
     setCellRunningState(index, false);
     syncOutLabelRowForCell(index);
@@ -3300,6 +3576,7 @@ async function resetServer() {
     outputs.clear();
     cellStdoutPlainText.clear();
     staleCells.clear();
+    clearPersistedOutputsForPath(layoutStoragePath());
     cellsEl.querySelectorAll<HTMLElement>("[data-output-block]").forEach((el) => {
       el.style.display = "none";
     });
@@ -3311,7 +3588,7 @@ async function resetServer() {
       const idx = Number(cell.dataset.pipelineCellDrag);
       if (Number.isInteger(idx)) syncCellCompactClassForIndex(idx);
     });
-    applyFloatingLayout();
+    scheduleLayoutAndLines();
     setStatus("Restarting server…");
     for (let i = 0; i < 60; i++) {
       await new Promise<void>((resolve) => setTimeout(resolve, 250));
@@ -3538,9 +3815,11 @@ modelRepoInput.addEventListener("keydown", (e) => {
   e.preventDefault();
   void loadModelsFromToolbar();
 });
+modelRepoInput.addEventListener("input", () => syncModelRepoInputWidthCh());
 
 window.addEventListener("resize", () => {
-  if (lastCells.length) applyFloatingLayout();
+  if (lastCells.length) scheduleLayoutAndLines();
+  schedulePersistCellsView();
   requestAnimationFrame(() => updatePipelineLineBreakMarkers());
 });
 
@@ -4152,6 +4431,7 @@ function bindCellsViewportPan() {
     }
     cellsEl.classList.remove("cells--panning");
     cellsPanState = null;
+    schedulePersistCellsView();
   };
   cellsEl.addEventListener("pointerup", endCellsPan);
   cellsEl.addEventListener("pointercancel", endCellsPan);
@@ -4189,15 +4469,18 @@ function bindCellsViewportPan() {
       /** Zoom-wrap origin is offset by pan-arena padding `(g,g)`; keep point under cursor fixed. */
       const sl1 = g + (sl0 + mx - g) * (newS / oldS) - mx;
       const st1 = g + (st0 + my - g) * (newS / oldS) - my;
-      cellsEl.scrollLeft = sl1;
-      cellsEl.scrollTop = st1;
+    cellsEl.scrollLeft = sl1;
+    cellsEl.scrollTop = st1;
       requestAnimationFrame(() => {
         cellsEl.scrollLeft = sl1;
         cellsEl.scrollTop = st1;
+        schedulePersistCellsView();
       });
     },
     { passive: false },
   );
+
+  cellsEl.addEventListener("scroll", schedulePersistCellsView, { passive: true });
 }
 
 bindCellGeometryInteractions();
