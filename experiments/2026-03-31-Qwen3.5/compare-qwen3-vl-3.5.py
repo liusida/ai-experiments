@@ -155,7 +155,7 @@ def short_token_label(processor, tid: int, *, max_chars: int = 12) -> str:
 
 
 def save_base_image_url_for_merge_html(pil: Image.Image, *, filename: str = "merge-html-base.png") -> str:
-    """Write PNG under :func:`stonesoup.plot_dir` and return UI path ``/outputs/stonesoup/…``."""
+    """Write PNG under :func:`stonesoup.plot_dir` and return UI path ``/outputs/…`` (repo-relative)."""
     out_path = stonesoup.plot_dir() / filename
     pil.save(out_path, format="PNG", optimize=True)
     rel = out_path.relative_to(stonesoup.repo_root()).as_posix()
@@ -419,7 +419,7 @@ print(
     "</ul>"
     "<p style='color:#5f6368;font-size:13px'>Matplotlib PNGs and HTML grid row above use the same scale. "
     "PNG figures: <code>stonesoup.show()</code>; standalone merge view: "
-    "<code>outputs/stonesoup/…/merge-grids.html</code>.</p>"
+    "<code>outputs/…/merge-grids.html</code>.</p>"
     "</div>",
     flush=True,
 )

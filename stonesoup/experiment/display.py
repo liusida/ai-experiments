@@ -125,12 +125,27 @@ def _apply_font_family_to_figure(fig: Any) -> None:
             pass
 
 
-def show(fig: Any | None = None, *, dpi: int = 120, format: str = "png", **savefig_kw: Any) -> str:
-    """Save the current (or given) Matplotlib figure using :func:`outputs_dir` (``outputs/stonesoup/…``) and print HTML.
+def show(
+    fig: Any | None = None,
+    *,
+    dpi: int = 120,
+    format: str = "png",
+    basename: str | None = None,
+    **savefig_kw: Any,
+) -> str:
+    """Save the current (or given) Matplotlib figure using :func:`outputs_dir` and print HTML.
 
-    Same directory as :func:`outputs_dir` (``outputs/stonesoup/<repo-relative script path>/``). The
-    backend serves under ``/outputs/…`` (Vite proxies ``/outputs`` in dev). Stdout starts with
-    ``# stonesoup:render=html`` for the following ``<img>`` HTML.
+    Same directory as :func:`outputs_dir`: ``outputs/<…>/<script_stem>/`` under the repo (leading
+    ``experiments/`` stripped from the watched path; see :mod:`stonesoup.experiment.paths`).
+    The backend serves those files under ``/outputs/…`` (Vite proxies ``/outputs`` in dev). Stdout
+    starts with ``# stonesoup:render=html`` for the following ``<img>`` HTML.
+
+    If ``basename`` is set, the file is ``{basename}.{format}`` (no directory components; ``.`` in
+    ``basename`` is allowed so you can pass ``foo.v2`` for ``foo.v2.png``). Otherwise a random name
+    is used.
+
+    After a successful ``savefig``, the figure is closed with ``matplotlib.pyplot.close(fig)`` to
+    release memory; do not reuse the same ``Figure`` instance afterward.
 
     Typical use::
 
@@ -138,15 +153,14 @@ def show(fig: Any | None = None, *, dpi: int = 120, format: str = "png", **savef
         plt.plot([0, 1], [0, 1])
         stonesoup.show()
 
-    Returns the repo-relative POSIX path (``outputs/stonesoup/...``).
+    Returns the repo-relative POSIX path (under ``outputs/…``, same rule as :func:`outputs_dir`).
     """
     import matplotlib.figure
+    import matplotlib.pyplot as plt
 
     from stonesoup import STONESOUP_RENDER_HTML
 
     if fig is None:
-        import matplotlib.pyplot as plt
-
         fig = plt.gcf()
 
     if not isinstance(fig, matplotlib.figure.Figure):
@@ -159,7 +173,24 @@ def show(fig: Any | None = None, *, dpi: int = 120, format: str = "png", **savef
     if fmt not in ("png", "svg", "pdf", "webp"):
         raise ValueError(f"Unsupported format {format!r}; try png, svg, pdf, or webp.")
 
-    name = f"{uuid.uuid4().hex}.{fmt}"
+    # Never forward Stonesoup-only options to ``Figure.savefig`` (e.g. if ``basename`` slipped into
+    # ``**savefig_kw`` from an outdated wrapper or duplicate kwarg).
+    if basename is None and "basename" in savefig_kw:
+        basename = savefig_kw.pop("basename")
+    else:
+        savefig_kw.pop("basename", None)
+
+    if basename is not None:
+        raw = basename.strip()
+        stem_path = Path(raw)
+        if not raw or len(stem_path.parts) != 1 or stem_path.is_absolute():
+            raise ValueError(
+                "show(basename=...): use one path segment, no extension "
+                f"(saved as {{basename}}.{fmt}); got {basename!r}"
+            )
+        name = f"{stem_path.name}.{fmt}"
+    else:
+        name = f"{uuid.uuid4().hex}.{fmt}"
     abs_path = out_dir / name
     kw = {"dpi": dpi, "bbox_inches": "tight", **savefig_kw}
     _ensure_matplotlib_font_stack()
@@ -179,14 +210,19 @@ def show(fig: Any | None = None, *, dpi: int = 120, format: str = "png", **savef
         fig.savefig(abs_path, format=fmt, **kw)
 
     rel_posix = (abs_path.relative_to(root)).as_posix()
-    src = f"/{rel_posix}"
+    # Bust browser cache when the same path is overwritten (e.g. fixed basename).
+    t_ms = abs_path.stat().st_mtime_ns // 1_000_000
+    src = f"/{rel_posix}?t={t_ms}"
 
-    # Two-part stdout: render hint then HTML (see peelStonesoupRenderHint in the UI).
-    print(STONESOUP_RENDER_HTML, end="")
-    print(
-        f'<p class="stonesoup-show"><img src="{src}" alt="stonesoup.show()" loading="lazy" '
-        f'style="max-width:100%;height:auto" /></p>',
-        flush=True,
-    )
+    try:
+        # Two-part stdout: render hint then HTML (see peelStonesoupRenderHint in the UI).
+        print(STONESOUP_RENDER_HTML, end="")
+        print(
+            f'<p class="stonesoup-show"><img src="{src}" alt="stonesoup.show()" loading="lazy" '
+            f'style="max-width:100%;height:auto" /></p>',
+            flush=True,
+        )
+    finally:
+        plt.close(fig)
 
     return rel_posix

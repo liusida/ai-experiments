@@ -330,13 +330,13 @@ app.innerHTML = `
       <div class="cells-pan-arena" id="cells-pan-arena"><div class="cells-zoom-wrap" id="cells-zoom-wrap"><div class="cells-canvas" id="cells-canvas"></div></div></div>
     </div>
     <div class="stonesoup-console" id="stonesoup-console">
-      <div class="stonesoup-console-panel stonesoup-dock-pane" id="stonesoup-console-panel">
+      <div class="stonesoup-console-panel stonesoup-dock-pane" id="stonesoup-console-panel" title="Click to copy all">
         <div class="stonesoup-console-toolbar stonesoup-dock-toolbar">
           <span class="stonesoup-console-title stonesoup-dock-title">Console</span>
           <button type="button" class="btn-icon" id="stonesoup-console-clear" title="Clear log">Clear</button>
           <button type="button" class="btn-icon" id="stonesoup-console-collapse" title="Hide console">▾</button>
         </div>
-        <pre class="stonesoup-console-pre stonesoup-dock-body" id="stonesoup-console-pre"></pre>
+        <pre class="stonesoup-console-pre stonesoup-dock-body" id="stonesoup-console-pre" title="Click to copy all"></pre>
       </div>
     </div>
     <div class="kernel-vars-dock" id="kernel-vars-dock">
@@ -358,7 +358,7 @@ app.innerHTML = `
         <button type="button" class="cells-auto-fab" id="btn-cells-auto-layout" title="Auto layout: discard saved positions/sizes and reflow into the default grid" aria-label="Auto layout">↻</button>
         <button type="button" class="cells-auto-fab" id="btn-editor-toggle" data-editor-pref="${getEditorPref()}" title="Switch editor for deeplinks (Cursor / VS Code)">${EDITOR_ICON_CURSOR}${EDITOR_ICON_VSCODE}</button>
         <button type="button" class="cells-auto-fab" id="btn-workspace-fullscreen" title="Fullscreen workspace (cells, console, variables)" aria-label="Enter fullscreen" aria-pressed="false"><svg class="fullscreen-icon fullscreen-icon--enter" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg><svg class="fullscreen-icon fullscreen-icon--exit" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm0-6h5V5H5v5zm6 0v5h5v-5h-5zm6-6h-2v5h5V5h-3v2h-2V5z"/></svg></button>
-        <button type="button" class="cells-auto-fab" id="btn-console-toggle" title="Server log console (stderr/stdout during model load, etc.)" aria-label="Toggle console" aria-expanded="false">&gt;_</button>
+        <button type="button" class="cells-auto-fab" id="btn-console-toggle" title="Console: server log, model load, and cell stdout/stderr" aria-label="Toggle console" aria-expanded="false">&gt;_</button>
         <button type="button" class="kernel-vars-chip" id="kernel-vars-toggle" aria-expanded="false" title="Show variables (this script)">
           <span class="kernel-vars-chip-icon" aria-hidden="true">{ }</span>
           <span class="kernel-vars-chip-sessions" id="kernel-vars-sessions"></span>
@@ -404,6 +404,7 @@ const kernelVarsCollapse = app.querySelector<HTMLButtonElement>("#kernel-vars-co
 const kernelVarsRefresh = app.querySelector<HTMLButtonElement>("#kernel-vars-refresh")!;
 const kernelVarsSessions = app.querySelector<HTMLSpanElement>("#kernel-vars-sessions")!;
 const stonesoupConsoleRoot = app.querySelector<HTMLDivElement>("#stonesoup-console")!;
+const stonesoupConsolePanel = app.querySelector<HTMLDivElement>("#stonesoup-console-panel")!;
 const stonesoupConsolePre = app.querySelector<HTMLPreElement>("#stonesoup-console-pre")!;
 const btnConsoleToggle = app.querySelector<HTMLButtonElement>("#btn-console-toggle")!;
 const btnConsoleClear = app.querySelector<HTMLButtonElement>("#stonesoup-console-clear")!;
@@ -411,9 +412,12 @@ const btnConsoleCollapse = app.querySelector<HTMLButtonElement>("#stonesoup-cons
 
 const KERNEL_VARS_EXPANDED_KEY = "stonesoup_kernel_vars_expanded";
 const STONESOUP_CONSOLE_EXPANDED_KEY = "stonesoup_console_expanded";
+/** Persisted across page refresh (same idea as cell outputs). */
+const STONESOUP_CONSOLE_LOG_LS_KEY = "stonesoup_console_log_v1";
 /** Cap retained server log text so the DOM stays bounded. */
 const CONSOLE_BUFFER_MAX = 200 * 1024;
 let appLogBuffer = "";
+let saveConsoleTimer = 0;
 
 function resetLoopPaletteSlotPosition(el: HTMLElement) {
   el.classList.remove("loop-palette--dragging");
@@ -429,9 +433,9 @@ function resetLoopPaletteSlotPosition(el: HTMLElement) {
 cellsEl.addEventListener("click", async (e) => {
   const out = (e.target as HTMLElement).closest<HTMLElement>(".out");
   if (!out || !cellsCanvas.contains(out)) return;
-  const idx = Number(out.dataset.out);
-  if (Number.isNaN(idx)) return;
-  const o = outputs.get(idx);
+  const mk = out.dataset.markerKey;
+  if (!mk) return;
+  const o = outputs.get(mk);
   const text = o ? formatOut(o) : (out.textContent ?? "").trimEnd();
   if (!text) return;
   try {
@@ -924,8 +928,8 @@ const staleCells = new Set<number>();
 /** Last ``revision`` we applied ``changed_cell_indices`` from (avoids re-flagging stale on every WS ``cells`` resend / reconnect). */
 let lastRevisionStaleMerged = -1;
 
-/** Per-cell run input text; merged into kernel as ``CELL_INPUT`` (survives UI re-render). */
-const cellRunInputDraft = new Map<number, string>();
+/** Per-cell run input text; merged into kernel as ``CELL_INPUT`` (survives UI re-render). Keyed by ``marker_key``. */
+const cellRunInputDraft = new Map<string, string>();
 
 /** How stdout is interpreted when not forced to plain via chip; only ``html`` / ``markdown`` enable rich rendering (first-line hint). */
 type StdoutKind = "text" | "html" | "markdown";
@@ -939,10 +943,11 @@ type CellOutput = {
   /** Wall time for ``kernel.run_cell`` only (seconds), from the server. */
   durationSec?: number;
 };
-const outputs = new Map<number, CellOutput>();
+/** Keyed by cell ``marker_key`` (stable when cells are reordered / indices shift). */
+const outputs = new Map<string, CellOutput>();
 
-/** When set, stdout is shown escaped (toggle chip); only meaningful for HTML/MD preset outputs. */
-const cellStdoutPlainText = new Set<number>();
+/** When set, stdout is shown escaped (toggle chip); only meaningful for HTML/MD preset outputs. Keys = ``marker_key``. */
+const cellStdoutPlainText = new Set<string>();
 
 const STONESOUP_RENDER_FIRST_LINE = /^\s*#\s*stonesoup:render\s*=\s*(auto|text|html|markdown|md)\s*$/i;
 
@@ -981,10 +986,19 @@ function peelStonesoupRenderHint(raw: string): { body: string; renderHint: Stdou
   return { body: rest, renderHint };
 }
 
+function markerKeyForCellIndex(index: number): string | undefined {
+  return lastCells.find((c) => c.index === index)?.marker_key;
+}
+
+function cellIndexForMarkerKey(markerKey: string): number | undefined {
+  return lastCells.find((c) => c.marker_key === markerKey)?.index;
+}
+
 function cellRunInputValue(index: number): string {
   const el = cellsEl.querySelector<HTMLInputElement>(`[data-run-input="${index}"]`);
   if (el) return el.value;
-  return cellRunInputDraft.get(index) ?? "";
+  const mk = markerKeyForCellIndex(index);
+  return mk ? (cellRunInputDraft.get(mk) ?? "") : "";
 }
 
 function cellWantsRunInput(index: number): boolean {
@@ -999,13 +1013,14 @@ function mergeCellRunInject(index: number, inject?: Record<string, unknown> | nu
   return base;
 }
 
-/** Drop output state for cell indices that no longer exist after a re-parse. */
-function pruneOutputsForCellCount(cellCount: number) {
+/** Drop output state for cells removed from the file (``marker_key`` no longer present). */
+function pruneOutputsForRemovedCells(cells: Cell[]) {
+  const valid = new Set(cells.map((c) => c.marker_key).filter(Boolean));
   for (const k of [...outputs.keys()]) {
-    if (!Number.isInteger(k) || k < 0 || k >= cellCount) outputs.delete(k);
+    if (!valid.has(k)) outputs.delete(k);
   }
-  for (const k of [...cellStdoutPlainText.keys()]) {
-    if (!Number.isInteger(k) || k < 0 || k >= cellCount) cellStdoutPlainText.delete(k);
+  for (const k of [...cellStdoutPlainText]) {
+    if (!valid.has(k)) cellStdoutPlainText.delete(k);
   }
   schedulePersistOutputs();
 }
@@ -1057,7 +1072,9 @@ let needsDefaultCellGrid = false;
 /** True when user clicked “automatic cell layout” — discard saved layout and run default grid once. */
 let pendingUserAutoLayout = false;
 
-const CELL_OUTPUTS_LS_KEY = "stonesoup_cell_outputs_v1";
+const CELL_OUTPUTS_LS_KEY = "stonesoup_cell_outputs_v2";
+/** Legacy: keys per file were ``"0"``, ``"1"``, … (cell index). Migrated on load using current ``marker_key`` list. */
+const CELL_OUTPUTS_LEGACY_KEY = "stonesoup_cell_outputs_v1";
 type CellOutputsFileMap = Record<string, CellOutput>;
 
 function parseCellOutputsStore(): Record<string, CellOutputsFileMap> {
@@ -1070,6 +1087,19 @@ function parseCellOutputsStore(): Record<string, CellOutputsFileMap> {
     /* ignore */
   }
   return {};
+}
+
+function loadLegacyCellOutputsPathMap(pathKey: string): CellOutputsFileMap | null {
+  try {
+    const raw = localStorage.getItem(CELL_OUTPUTS_LEGACY_KEY);
+    if (!raw) return null;
+    const all = JSON.parse(raw) as unknown;
+    if (!all || typeof all !== "object" || Array.isArray(all)) return null;
+    const rec = (all as Record<string, CellOutputsFileMap>)[pathKey];
+    return rec && typeof rec === "object" && !Array.isArray(rec) ? rec : null;
+  } catch {
+    return null;
+  }
 }
 
 function writeCellOutputsStore(all: Record<string, CellOutputsFileMap>) {
@@ -1097,28 +1127,44 @@ function schedulePersistOutputs() {
   }, 300);
 }
 
-function loadOutputsForPath(pathKey: string) {
+function parseCellOutputRecord(v: unknown): CellOutput | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const out: CellOutput = {
+    stdout: String(o.stdout ?? ""),
+    stderr: String(o.stderr ?? ""),
+    ok: Boolean(o.ok),
+  };
+  const rh = o.renderHint;
+  if (rh === "html" || rh === "markdown" || rh === "text") {
+    out.renderHint = rh as StdoutKind;
+  }
+  const ds = o.durationSec;
+  if (typeof ds === "number" && Number.isFinite(ds)) out.durationSec = ds;
+  return out;
+}
+
+/** Restore saved outputs; numeric keys (legacy) map to ``cells[i].marker_key``. */
+function loadOutputsForPath(pathKey: string, cells: Cell[]) {
   if (!pathKey || pathKey === "_unset") return;
   const all = parseCellOutputsStore();
-  const rec = all[pathKey];
+  let rec: CellOutputsFileMap | undefined = all[pathKey];
+  if (!rec || Object.keys(rec).length === 0) {
+    rec = loadLegacyCellOutputsPathMap(pathKey) ?? undefined;
+  }
   if (!rec) return;
   for (const [k, v] of Object.entries(rec)) {
-    const idx = Number(k);
-    if (!Number.isInteger(idx)) continue;
-    if (!v || typeof v !== "object") continue;
-    const o = v as Record<string, unknown>;
-    const out: CellOutput = {
-      stdout: String(o.stdout ?? ""),
-      stderr: String(o.stderr ?? ""),
-      ok: Boolean(o.ok),
-    };
-    const rh = o.renderHint;
-    if (rh === "html" || rh === "markdown" || rh === "text") {
-      out.renderHint = rh as StdoutKind;
+    let mk: string | null = null;
+    if (/^\d+$/.test(k)) {
+      const idx = Number(k);
+      if (Number.isInteger(idx) && idx >= 0 && idx < cells.length) mk = cells[idx]!.marker_key;
+      else continue;
+    } else {
+      mk = k;
     }
-    const ds = o.durationSec;
-    if (typeof ds === "number" && Number.isFinite(ds)) out.durationSec = ds;
-    outputs.set(idx, out);
+    if (!mk) continue;
+    const out = parseCellOutputRecord(v);
+    if (out) outputs.set(mk, out);
   }
 }
 
@@ -1127,6 +1173,18 @@ function clearPersistedOutputsForPath(pathKey: string) {
   const all = parseCellOutputsStore();
   delete all[pathKey];
   writeCellOutputsStore(all);
+  try {
+    const raw = localStorage.getItem(CELL_OUTPUTS_LEGACY_KEY);
+    if (!raw) return;
+    const legacy = JSON.parse(raw) as unknown;
+    if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) return;
+    const m = legacy as Record<string, CellOutputsFileMap>;
+    if (!m[pathKey]) return;
+    delete m[pathKey];
+    localStorage.setItem(CELL_OUTPUTS_LEGACY_KEY, JSON.stringify(m));
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Tree: cells and nested loops (each loop has its own iteration list). */
@@ -1428,6 +1486,8 @@ function syncAbortButton() {
 
 /** In-progress stdout/stderr merged from WebSocket `run_stream` (lost on `renderCells` unless restored). */
 const cellStreamBufferByIndex = new Map<number, string>();
+/** Dedupe ``── Cell N · title ──`` line once per run (mirrored into Console with streamed output). */
+const cellConsoleRunHeaderLogged = new Set<number>();
 
 function applyPipelineChipRunningClassesForIndex(index: number) {
   const stack = document.getElementById("pipelines-stack");
@@ -1457,6 +1517,7 @@ function setCellRunningState(index: number, running: boolean) {
   else {
     runningCellIndices.delete(index);
     cellStreamBufferByIndex.delete(index);
+    cellConsoleRunHeaderLogged.delete(index);
   }
 
   const cell = cellsCanvas.querySelector<HTMLElement>(`.cell[data-pipeline-cell-drag="${index}"]`);
@@ -1482,11 +1543,20 @@ function prepareCellStreamUi(index: number) {
   scheduleLayoutAndLines();
 }
 
+function appendCellRunHeaderToConsole(index: number) {
+  if (cellConsoleRunHeaderLogged.has(index)) return;
+  const meta = lastCells.find((c) => c.index === index);
+  const title = (meta?.title ?? "").trim().replace(/\s+/g, " ") || `Cell ${index}`;
+  appendAppLogChunk(`\n── Cell ${index} · ${title} ──\n`);
+  cellConsoleRunHeaderLogged.add(index);
+}
+
 function appendCellStreamChunk(index: number, text: string) {
   const next = foldCarriageReturns((cellStreamBufferByIndex.get(index) ?? "") + text);
   cellStreamBufferByIndex.set(index, next);
   const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
   if (outEl) outEl.textContent = next;
+  appendAppLogChunk(text);
 }
 
 /** File watcher can broadcast `cells` during a long run; `renderCells` rebuilds DOM and drops live stream text + running state until restored. */
@@ -1525,12 +1595,12 @@ function applyCellsFromServer(
   const cells = Array.isArray(data.cells) ? data.cells.map(cellFromApiPayload) : [];
   if (pathChanged) {
     const outPersistKey = persistPathKey(incomingPath ?? (pathInput.value.trim() || null));
-    if (outPersistKey) loadOutputsForPath(outPersistKey);
+    if (outPersistKey) loadOutputsForPath(outPersistKey, cells);
   }
   if (!pathChanged && !opts?.forceResetOutputs) {
     pruneStaleCells(cells.length);
   }
-  pruneOutputsForCellCount(cells.length);
+  pruneOutputsForRemovedCells(cells);
   const changed = data.changed_cell_indices;
   const revKey =
     typeof data.revision === "number" && Number.isFinite(data.revision) ? data.revision : Number(data.revision) || 0;
@@ -1808,15 +1878,41 @@ function renderConsoleBuffer() {
   }
 }
 
+function schedulePersistConsoleBuffer() {
+  window.clearTimeout(saveConsoleTimer);
+  saveConsoleTimer = window.setTimeout(() => {
+    saveConsoleTimer = 0;
+    try {
+      localStorage.setItem(STONESOUP_CONSOLE_LOG_LS_KEY, appLogBuffer);
+    } catch {
+      /* quota or private mode */
+    }
+  }, 300);
+}
+
 function appendAppLogChunk(text: string) {
   if (!text) return;
   appLogBuffer = trimConsoleBuffer(foldCarriageReturns(appLogBuffer + text));
   renderConsoleBuffer();
+  schedulePersistConsoleBuffer();
 }
 
 function clearConsoleBuffer() {
   appLogBuffer = "";
   stonesoupConsolePre.textContent = "";
+  schedulePersistConsoleBuffer();
+}
+
+function loadPersistedConsoleBuffer() {
+  try {
+    const raw = localStorage.getItem(STONESOUP_CONSOLE_LOG_LS_KEY);
+    if (typeof raw === "string" && raw.length > 0) {
+      appLogBuffer = trimConsoleBuffer(foldCarriageReturns(raw));
+    }
+  } catch {
+    /* ignore */
+  }
+  renderConsoleBuffer();
 }
 
 function setConsoleExpanded(expanded: boolean) {
@@ -1842,6 +1938,28 @@ btnConsoleCollapse.addEventListener("click", () => {
 btnConsoleClear.addEventListener("click", () => {
   clearConsoleBuffer();
 });
+
+stonesoupConsolePanel.addEventListener("click", async (e) => {
+  const t = e.target as HTMLElement;
+  if (t.closest("button")) return;
+  const text = appLogBuffer.replace(/\s+$/, "");
+  if (!text) {
+    setStatus("Console is empty");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("Console copied");
+    stonesoupConsolePre.classList.remove("stonesoup-console-pre--copied");
+    void stonesoupConsolePre.offsetWidth;
+    stonesoupConsolePre.classList.add("stonesoup-console-pre--copied");
+    window.setTimeout(() => stonesoupConsolePre.classList.remove("stonesoup-console-pre--copied"), 500);
+  } catch {
+    setStatus("Copy failed (clipboard permission?)");
+  }
+});
+
+loadPersistedConsoleBuffer();
 
 /** Keepalive for dev proxies (e.g. Vite ``/ws``) that drop idle WebSockets. */
 let wsKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -1929,9 +2047,14 @@ function connectWs() {
             ? (data as { op: string }).op
             : "";
         const sep =
-          op === "model_load" ? "\n\n── model load ──\n" : "\n\n── log ──\n";
+          op === "model_load"
+            ? "\n\n── model load ──\n"
+            : op === "model_unload"
+              ? "\n\n── model unload ──\n"
+              : "\n\n── log ──\n";
         appLogBuffer = trimConsoleBuffer(appLogBuffer + sep);
         renderConsoleBuffer();
+        schedulePersistConsoleBuffer();
       } else if (data.type === "app_log") {
         const t = typeof data.text === "string" ? data.text : "";
         appendAppLogChunk(t);
@@ -1955,6 +2078,17 @@ function connectWs() {
               err
                 ? `Model load failed — ${err.length > 120 ? `${err.slice(0, 120)}…` : err}`
                 : "Model load failed",
+            );
+          }
+        } else if (op === "model_unload") {
+          void fetchLoadedModels();
+          if (ok) {
+            setStatus("Model unload finished");
+          } else {
+            setStatus(
+              err
+                ? `Model unload failed — ${err.length > 120 ? `${err.slice(0, 120)}…` : err}`
+                : "Model unload failed",
             );
           }
         }
@@ -1989,13 +2123,27 @@ const TAB20: readonly string[] = [
   "#9edae5",
 ];
 
-function tab20Accent(index: number): string {
-  const i = Math.max(0, Math.floor(index));
-  return TAB20[i % TAB20.length]!;
+/** FNV-1a 32-bit hash — stable tab20 pick from cell title (not list index). */
+function hashStringToUint32(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }
 
-function applyCellColorVars(el: HTMLElement, index: number) {
-  el.style.setProperty("--cell-accent", tab20Accent(index));
+function tab20AccentFromKey(accentKey: string): string {
+  return TAB20[hashStringToUint32(accentKey) % TAB20.length]!;
+}
+
+/** Same key as pipeline chips: ``meta?.title ?? `Cell ${index}` `` (empty title hashes as empty string). */
+function cellAccentKey(index: number): string {
+  return lastCells.find((c) => c.index === index)?.title ?? `Cell ${index}`;
+}
+
+function applyCellColorVars(el: HTMLElement, accentKey: string) {
+  el.style.setProperty("--cell-accent", tab20AccentFromKey(accentKey));
 }
 
 /** View zoom for the cell canvas (logical layout unchanged; wrapper size × scale for scroll extents). */
@@ -2420,7 +2568,7 @@ function renderPipelineBar() {
         const chip = document.createElement("span");
         chip.className = "pipeline-chip pipeline-chip-cell";
         if (staleCells.has(idx)) chip.classList.add("pipeline-chip-stale");
-        applyCellColorVars(chip, idx);
+        applyCellColorVars(chip, title);
         chip.draggable = true;
         chip.dataset.pipelineChipDrag = pathJson;
         chip.dataset.cellIndex = String(idx);
@@ -3064,12 +3212,12 @@ function renderCells(cells: Cell[], path: string | null) {
     }
   }
 
-  const validCellIdx = new Set(cells.map((c) => c.index));
+  const validMarkerKeys = new Set(cells.map((c) => c.marker_key).filter(Boolean));
   for (const k of [...cellRunInputDraft.keys()]) {
-    if (!validCellIdx.has(k)) cellRunInputDraft.delete(k);
+    if (!validMarkerKeys.has(k)) cellRunInputDraft.delete(k);
   }
   for (const c of cells) {
-    if (!c.cell_input) cellRunInputDraft.delete(c.index);
+    if (!c.cell_input) cellRunInputDraft.delete(c.marker_key);
   }
 
   cellsCanvas.innerHTML = "";
@@ -3084,10 +3232,10 @@ function renderCells(cells: Cell[], path: string | null) {
       ? "Source changed on disk — re-run to clear. Drag title bar: move on canvas or drop on pipeline · corner → resize"
       : "Drag title bar to move · drop on pipeline bar to add · corner to resize";
     if (stale) div.classList.add("cell-stale");
-    applyCellColorVars(div, c.index);
-    const prev = outputs.get(c.index);
+    applyCellColorVars(div, cellAccentKey(c.index));
+    const prev = outputs.get(c.marker_key);
     const showOut = shouldRevealOutputStrip(prev);
-    const outRendered = showOut && prev ? renderOutputInnerHtml(prev, c.index) : null;
+    const outRendered = showOut && prev ? renderOutputInnerHtml(prev, c.marker_key) : null;
     const outRichClass = outRendered?.richLayout ? " out-rich" : "";
     if (!showOut) div.classList.add("cell-compact");
     const slRaw = c.start_line;
@@ -3125,7 +3273,7 @@ function renderCells(cells: Cell[], path: string | null) {
             <span class="out-label" draggable="false">Output</span>
             <div class="out-label-meta" draggable="false"></div>
           </div>
-          <div class="out ${prev && !prev.ok ? "err" : prev ? "ok" : "out-pending"}${outRichClass}" draggable="false" data-out="${c.index}" title="Click to copy">${outRendered ? outRendered.html : ""}</div>
+          <div class="out ${prev && !prev.ok ? "err" : prev ? "ok" : "out-pending"}${outRichClass}" draggable="false" data-out="${c.index}" data-marker-key="${escapeHtmlAttr(c.marker_key)}" title="Click to copy">${outRendered ? outRendered.html : ""}</div>
         </div>
       </div>
       <div class="cell-resize-handle" draggable="false" title="Drag corner to resize"></div>
@@ -3134,11 +3282,11 @@ function renderCells(cells: Cell[], path: string | null) {
     syncOutLabelRowForCell(c.index);
     const runInp = div.querySelector<HTMLInputElement>(`[data-run-input="${c.index}"]`);
     if (runInp) {
-      runInp.value = cellRunInputDraft.get(c.index) ?? "";
+      runInp.value = cellRunInputDraft.get(c.marker_key) ?? "";
       const stopHeadDrag = (e: Event) => e.stopPropagation();
       runInp.addEventListener("pointerdown", stopHeadDrag);
       runInp.addEventListener("mousedown", stopHeadDrag);
-      runInp.addEventListener("input", () => cellRunInputDraft.set(c.index, runInp.value));
+      runInp.addEventListener("input", () => cellRunInputDraft.set(c.marker_key, runInp.value));
       runInp.addEventListener("keydown", (e: KeyboardEvent) => {
         if (e.key !== "Enter" || (!e.ctrlKey && !e.metaKey)) return;
         e.preventDefault();
@@ -3267,12 +3415,12 @@ function renderStdoutHtml(
   return { html: escapeHtml(stdout), rich: false };
 }
 
-function renderOutputInnerHtml(o: CellOutput, cellIndex: number): { html: string; richLayout: boolean } {
+function renderOutputInnerHtml(o: CellOutput, outputKey: string): { html: string; richLayout: boolean } {
   const hasBody = Boolean(o.stdout.trim() || o.stderr.trim());
   if (!hasBody) {
     return { html: escapeHtml(formatOut(o)), richLayout: false };
   }
-  const asPlain = cellStdoutPlainText.has(cellIndex);
+  const asPlain = cellStdoutPlainText.has(outputKey);
   const { html: outHtml, rich: stdoutRich } = renderStdoutHtml(o.stdout, asPlain, o.renderHint);
   let html = outHtml;
   if (o.stderr.trim()) {
@@ -3283,7 +3431,9 @@ function renderOutputInnerHtml(o: CellOutput, cellIndex: number): { html: string
 
 /** Creates/updates/removes the HTML/MD ↔ plain chip in the output header. */
 function syncOutLabelRowForCell(index: number) {
-  const o = outputs.get(index);
+  const mk = markerKeyForCellIndex(index);
+  if (!mk) return;
+  const o = outputs.get(mk);
   const block = cellsEl.querySelector<HTMLElement>(`[data-output-block="${index}"]`);
   if (!block) return;
   const row = block.querySelector<HTMLElement>(".out-label-row");
@@ -3317,7 +3467,7 @@ function syncOutLabelRowForCell(index: number) {
   }
 
   const wantChip = Boolean(o && showOutputRichToggleForCell(o));
-  let chip = meta.querySelector<HTMLButtonElement>(`[data-out-plain-toggle="${index}"]`);
+  let chip = meta.querySelector<HTMLButtonElement>(`[data-out-plain-toggle="${mk}"]`);
   if (!wantChip) {
     chip?.remove();
     return;
@@ -3327,21 +3477,22 @@ function syncOutLabelRowForCell(index: number) {
     chip?.remove();
     return;
   }
-  const asPlain = cellStdoutPlainText.has(index);
+  const asPlain = cellStdoutPlainText.has(mk);
   if (!chip) {
     chip = document.createElement("button");
     chip.type = "button";
     chip.className = "out-mode-chip";
     chip.draggable = false;
-    chip.dataset.outPlainToggle = String(index);
+    chip.dataset.outPlainToggle = mk;
     chip.setAttribute("aria-label", "Toggle plain text");
     chip.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      const i = Number(chip!.dataset.outPlainToggle);
-      if (!Number.isInteger(i)) return;
-      if (cellStdoutPlainText.has(i)) cellStdoutPlainText.delete(i);
-      else cellStdoutPlainText.add(i);
-      refreshCellOutputView(i);
+      const key = chip!.dataset.outPlainToggle;
+      if (!key) return;
+      if (cellStdoutPlainText.has(key)) cellStdoutPlainText.delete(key);
+      else cellStdoutPlainText.add(key);
+      const i = cellIndexForMarkerKey(key);
+      if (i !== undefined) refreshCellOutputView(i);
     });
     meta.appendChild(chip);
   }
@@ -3351,13 +3502,15 @@ function syncOutLabelRowForCell(index: number) {
 
 function refreshCellOutputView(index: number) {
   syncOutLabelRowForCell(index);
-  const o = outputs.get(index);
+  const mk = markerKeyForCellIndex(index);
+  if (!mk) return;
+  const o = outputs.get(mk);
   const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
   if (!outEl || !o) return;
   const reveal = shouldRevealOutputStrip(o);
   if (!reveal) return;
   if (outEl.classList.contains("out-streaming")) return;
-  const r = renderOutputInnerHtml(o, index);
+  const r = renderOutputInnerHtml(o, mk);
   outEl.className = "out " + (o.ok ? "ok" : "err") + (r.richLayout ? " out-rich" : "");
   outEl.innerHTML = r.html;
 }
@@ -3394,8 +3547,9 @@ function isOutputStripVisible(index: number): boolean {
 
 /** Output strip should stay uncollapsed: saved result, visible strip, or cell currently executing (tqdm / model load). */
 function cellHasExpandedOutputUi(index: number): boolean {
+  const mk = markerKeyForCellIndex(index);
   return (
-    shouldRevealOutputStrip(outputs.get(index)) ||
+    (mk != null && shouldRevealOutputStrip(outputs.get(mk))) ||
     isOutputStripVisible(index) ||
     runningCellIndices.has(index)
   );
@@ -3475,10 +3629,15 @@ async function postWatch() {
 }
 
 async function runCell(index: number, inject?: Record<string, unknown> | null) {
+  if (runningCellIndices.has(index)) {
+    setStatus(`Cell ${index} is already running`);
+    return;
+  }
   const btn = cellsEl.querySelector<HTMLButtonElement>(`[data-run="${index}"]`);
   /* Match WebSocket run_start order: running flag first so compact/layout never clips live output (tqdm). */
   setCellRunningState(index, true);
   prepareCellStreamUi(index);
+  appendCellRunHeaderToConsole(index);
   syncOutLabelRowForCell(index);
   if (btn) btn.disabled = true;
   try {
@@ -3509,8 +3668,23 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
     const rawDur = (j as { duration_sec?: unknown }).duration_sec;
     if (typeof rawDur === "number" && Number.isFinite(rawDur)) nextOut.durationSec = rawDur;
     if (peeled.renderHint != null) nextOut.renderHint = peeled.renderHint;
-    if (presetRichKind(nextOut) === null) cellStdoutPlainText.delete(index);
-    outputs.set(index, nextOut);
+    const mk = markerKeyForCellIndex(index);
+    if (mk) {
+      if (presetRichKind(nextOut) === null) cellStdoutPlainText.delete(mk);
+      outputs.set(mk, nextOut);
+    }
+    const streamed = (cellStreamBufferByIndex.get(index) ?? "").length > 0;
+    if (
+      !streamed &&
+      (nextOut.stdout.trim() || nextOut.stderr.trim())
+    ) {
+      if (nextOut.stdout) appendAppLogChunk(nextOut.stdout);
+      if (nextOut.stderr.trim()) {
+        appendAppLogChunk(
+          (nextOut.stdout.trim() ? "\n" : "") + nextOut.stderr,
+        );
+      }
+    }
     const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
     const reveal = shouldRevealOutputStrip(nextOut);
     setCellOutputBlockVisible(index, reveal);
@@ -3543,8 +3717,10 @@ async function runCell(index: number, inject?: Record<string, unknown> | null) {
       renderPipelineBar();
     }
   } catch (e) {
+    appendAppLogChunk(`\n${String(e)}\n`);
     const nextOut = { stdout: "", stderr: String(e), ok: false };
-    outputs.set(index, nextOut);
+    const mkErr = markerKeyForCellIndex(index);
+    if (mkErr) outputs.set(mkErr, nextOut);
     const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${index}"]`);
     setCellOutputBlockVisible(index, true);
     if (outEl) {
@@ -3645,7 +3821,8 @@ async function runSteps(
     if (step.kind === "cell") {
       await runCell(step.index, base);
       nRuns++;
-      const o = outputs.get(step.index);
+      const mkStep = markerKeyForCellIndex(step.index);
+      const o = mkStep ? outputs.get(mkStep) : undefined;
       if (!o?.ok) return { ok: false, label: `cell ${step.index}` };
     } else {
       const iters = step.iterations.length ? step.iterations : [{}];

@@ -12,6 +12,7 @@ Below, **each heading is one feature area**—details for that feature appear **
 - A block **after** a marker until the next marker (or EOF) is one **cell**. Content **before** the first `# %%` becomes a single **implicit** head cell (no title in the UI)—**avoid** that by making the **very first line of the file** the `# %% …` line (with a title). **Do not** put a module docstring, `from __future__`, imports, blank “preamble” code, or anything else **above** it.
 - **After** each `# %%` line, that cell’s body is normal Python. If you use `from __future__ import annotations`, place it at the **start of the earliest cell body** (it must stay near the top of the file per Python).
 - Prefer **many small cells** over one huge cell so you can re-run only what changed.
+- Prefer **readable variable names** in cell code (clear words over cryptic or gratuitous leading underscores).
 
 ---
 
@@ -44,9 +45,9 @@ Below, **each heading is one feature area**—details for that feature appear **
 ## Paths and writing outputs
 
 - **`stonesoup.repo_root()`** — repo root (`STONESOUP_ROOT` if set, else editable-install layout). Pair with **`stonesoup.data_dir()`** for `data/` (created automatically).
-- **`stonesoup.outputs_dir()`** — per-script directory under **`outputs/stonesoup/<repo-relative script path>/`** (HTTP **`/outputs/…`**); use for figures, caches, or any cell artifact you want web-addressable. Same path as **`stonesoup.show()`**. **`stonesoup.plot_dir()`** is a synonym (historical name). Created automatically.
+- **`stonesoup.outputs_dir()`** — per-script directory under **`outputs/`** (HTTP **`/outputs/…`**): the watched file’s path relative to the repo with a leading **`experiments/`** removed if present, **`.py`** dropped, remaining directories kept (e.g. `experiments/2026-04-06-Foo/bar.py` → `outputs/2026-04-06-Foo/bar/`). Use for figures, caches, or any cell artifact you want web-addressable. **Same directory as `stonesoup.show()`** saves PNGs to. **`stonesoup.plot_dir()`** is a synonym (historical name). Created automatically.
 - **`stonesoup.script_dir()`** — folder containing the watched / running `.py` (e.g. stuff you keep next to the script, not under `outputs/`).
-- **HTML with images:** save PNGs (or other static assets) under **`stonesoup.outputs_dir()`** (or anywhere under that `outputs/stonesoup/…` tree), build **`src`** as **`"/" + path.relative_to(stonesoup.repo_root()).as_posix()`** (same pattern as `stonesoup.show()`). Optional query (e.g. `?cb=mtime`) avoids stale cache after overwrite. **Do not** embed large **`data:image/...;base64,...`** strings in printed HTML—view-source stays readable, payloads stay smaller, and the browser can cache files like normal HTTP assets.
+- **HTML with images:** save PNGs (or other static assets) under **`stonesoup.outputs_dir()`** (or anywhere under the repo’s **`outputs/…`** tree), build **`src`** as **`"/" + path.relative_to(stonesoup.repo_root()).as_posix()`** (same pattern as `stonesoup.show()`). Optional query (e.g. `?cb=mtime`) avoids stale cache after overwrite. **Do not** embed large **`data:image/...;base64,...`** strings in printed HTML—view-source stays readable, payloads stay smaller, and the browser can cache files like normal HTTP assets.
 
 ---
 

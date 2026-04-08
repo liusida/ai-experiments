@@ -120,8 +120,117 @@ def list_loaded_models_globally() -> list[dict[str, Any]]:
     return rows
 
 
+def _unload_debug_enabled() -> bool:
+    """True when ``STONESOUP_UNLOAD_DEBUG=1`` (terminal fallback when no UI sink is set)."""
+    raw = os.environ.get("STONESOUP_UNLOAD_DEBUG", "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+# Set by the FastAPI server during ``POST /api/models/unload`` so diagnostics go to the browser Console.
+_unload_diag_sink: Callable[[str], None] | None = None
+
+
+def set_unload_diag_sink(sink: Callable[[str], None] | None) -> None:
+    """Route unload diagnostics to the WebSocket Console (or ``None`` to clear)."""
+    global _unload_diag_sink
+    _unload_diag_sink = sink
+
+
+def _unload_diag_active() -> bool:
+    """Emit unload diagnostics when the UI sink is installed or ``STONESOUP_UNLOAD_DEBUG`` is set."""
+    return _unload_diag_sink is not None or _unload_debug_enabled()
+
+
+def _unload_diag_line(msg: str) -> None:
+    sink = _unload_diag_sink
+    if sink is not None:
+        sink(msg)
+    elif _unload_debug_enabled():
+        logger.info(msg)
+
+
+def _proc_rss_mb() -> float | None:
+    try:
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return float(parts[1]) / 1024.0
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _cuda_memory_lines() -> list[str]:
+    lines: list[str] = []
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            lines.append("cuda: not available")
+            return lines
+        for d in range(torch.cuda.device_count()):
+            alloc = torch.cuda.memory_allocated(d)
+            rsv = torch.cuda.memory_reserved(d)
+            peak = torch.cuda.max_memory_allocated(d)
+            lines.append(
+                f"  cuda:{d} current allocated={alloc / 2**30:.3f}GiB reserved={rsv / 2**30:.3f}GiB "
+                f"peak_since_reset={peak / 2**30:.3f}GiB"
+            )
+        lines.append(
+            "  (allocated/reserved = now; peak_since_reset = high-water since last reset, not 'still used')"
+        )
+    except Exception as exc:
+        lines.append(f"  cuda stats error: {exc}")
+    return lines
+
+
+def _unload_diag_snapshot(label: str) -> None:
+    if not _unload_diag_active():
+        return
+    rss = _proc_rss_mb()
+    rss_s = f"{rss:.1f}MiB VmRSS" if rss is not None else "VmRSS n/a"
+    pool_n = len(_SHARED_POOL)
+    with _shared_pool_lock:
+        ref_sum = sum(e.refcount for e in _SHARED_POOL.values())
+    _unload_diag_line(
+        f"[stonesoup unload diag] {label} | process {rss_s} | "
+        f"shared_pool entries={pool_n} refcount_sum={ref_sum}"
+    )
+    for line in _cuda_memory_lines():
+        _unload_diag_line(f"[stonesoup unload diag] {line}")
+
+
+def _reclaim_cuda_memory_after_release() -> None:
+    """Finish pending GPU work, collect cycles, then return unused CUDA blocks to the driver cache."""
+    gc.collect()
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return
+        for d in range(torch.cuda.device_count()):
+            torch.cuda.synchronize(d)
+        torch.cuda.empty_cache()
+        if _unload_diag_active():
+            for d in range(torch.cuda.device_count()):
+                peak = torch.cuda.max_memory_allocated(d)
+                _unload_diag_line(
+                    f"[stonesoup unload diag]   cuda:{d} peak_this_session_before_reset={peak / 2**30:.3f}GiB"
+                )
+            for d in range(torch.cuda.device_count()):
+                torch.cuda.reset_peak_memory_stats(d)
+    except Exception:
+        logger.debug("stonesoup: CUDA reclaim after unload failed", exc_info=True)
+
+
 def _dispose_orphan_bundle(bundle: SimpleNamespace) -> None:
     """Free a freshly loaded bundle that lost a cache race (not in the shared pool)."""
+    if _unload_diag_active():
+        rid = getattr(bundle, "repo_id", "?")
+        _unload_diag_line(f"[stonesoup unload diag] dispose orphan bundle repo_id={rid}")
+        _unload_diag_snapshot("orphan before free")
     model = getattr(bundle, "model", None)
     tokenizer = getattr(bundle, "tokenizer", None)
     processor = getattr(bundle, "processor", None)
@@ -129,26 +238,41 @@ def _dispose_orphan_bundle(bundle: SimpleNamespace) -> None:
     del model
     del tokenizer
     del processor
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
+    _reclaim_cuda_memory_after_release()
+    if _unload_diag_active():
+        _unload_diag_snapshot("orphan after reclaim")
 
 
 def _release_pool_binding(pool_key: str) -> None:
+    short = pool_key.split("\x00", 1)[0] if pool_key else "?"
     with _shared_pool_lock:
         entry = _SHARED_POOL.get(pool_key)
         if entry is None:
+            if _unload_diag_active():
+                _unload_diag_line(
+                    f"[stonesoup unload diag] [warning] pool_key missing from _SHARED_POOL "
+                    f"(stale unload?): repo_id={short!r}"
+                )
             return
+        old_rc = entry.refcount
         entry.refcount -= 1
-        if entry.refcount > 0:
+        new_rc = entry.refcount
+        rid = getattr(entry.bundle, "repo_id", "?")
+        if new_rc > 0:
+            if _unload_diag_active():
+                _unload_diag_line(
+                    f"[stonesoup unload diag] refcount {old_rc} -> {new_rc}; "
+                    f"pool entry kept (repo_id={rid!r})"
+                )
             return
         del _SHARED_POOL[pool_key]
         bundle = entry.bundle
+    if _unload_diag_active():
+        _unload_diag_line(
+            "[stonesoup unload diag] last refcount released; dropping tensors "
+            f"repo_id={getattr(bundle, 'repo_id', '?')!r} (key_head={short!r})"
+        )
+        _unload_diag_snapshot("before del")
     model = getattr(bundle, "model", None)
     tokenizer = getattr(bundle, "tokenizer", None)
     processor = getattr(bundle, "processor", None)
@@ -156,14 +280,9 @@ def _release_pool_binding(pool_key: str) -> None:
     del model
     del tokenizer
     del processor
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
+    _reclaim_cuda_memory_after_release()
+    if _unload_diag_active():
+        _unload_diag_snapshot("after del + reclaim")
 
 
 _IDENTIFIER_RE = re.compile(r"[^0-9A-Za-z_]+")
@@ -642,14 +761,30 @@ def unload_models_from_kernel(kernel: Kernel, *, names: list[str] | None = None)
     if target_names:
         _clear_convenience_aliases(kernel, state)
 
+    if _unload_diag_active() and target_names:
+        _unload_diag_line(f"[stonesoup unload diag] unload_models_from_kernel: {target_names}")
+        _unload_diag_snapshot("kernel unload start")
+
     unloaded: list[dict[str, str]] = []
     for name in target_names:
         repo_id = state.bundles.pop(name, "")
         pool_key = state.pool_keys.pop(name, None)
         kernel.globals.pop(name, None)
         if pool_key:
+            if _unload_diag_active():
+                _unload_diag_line(
+                    f"[stonesoup unload diag] binding name={name!r} repo_id={repo_id!r} -> release_pool_binding"
+                )
             _release_pool_binding(pool_key)
+        elif _unload_diag_active() and repo_id:
+            _unload_diag_line(
+                f"[stonesoup unload diag] [warning] binding {name!r} had no pool_key "
+                "(refcount will not drop)"
+            )
         unloaded.append(LoadedModelInfo(name=name, repo_id=repo_id).to_dict())
+
+    if _unload_diag_active() and target_names:
+        _unload_diag_snapshot("kernel unload end")
 
     return {
         "unloaded": unloaded,

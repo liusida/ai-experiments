@@ -50,7 +50,7 @@ def script_dir() -> Path:
 
 
 def outputs_dir() -> Path:
-    """Per-script directory under ``outputs/stonesoup/…`` (HTTP ``/outputs``); see :func:`stonesoup.experiment.paths.outputs_dir`."""
+    """Per-script directory under ``outputs/…`` (HTTP ``/outputs``); see :func:`stonesoup.experiment.paths.outputs_dir`."""
     from stonesoup.experiment.paths import outputs_dir as _od
 
     return _od()
@@ -106,8 +106,8 @@ def load_model(ref: str):
     return _load_model(ref)
 
 
-def show(fig=None, **kwargs):
-    """Save a Matplotlib figure to ``outputs/stonesoup/`` and print HTML for the Stonesoup UI."""
+def show(fig=None, *, basename=None, dpi=120, format="png", **kwargs):
+    """Save a Matplotlib figure via :func:`outputs_dir` (optional ``basename=`` stem), print HTML, then ``plt.close(fig)``."""
     from stonesoup.experiment import show as _show
 
-    return _show(fig, **kwargs)
+    return _show(fig, basename=basename, dpi=dpi, format=format, **kwargs)

@@ -101,7 +101,7 @@ plt.yscale("log")
 stonesoup.show()
 plt.close("all")
 
-# %% HTML: all token pairs with cos > 0.5 (paginated in-browser; under outputs/stonesoup/…/embeddings/)
+# %% HTML: all token pairs with cos > 0.5 (paginated in-browser; under outputs/…/embeddings/)
 import html
 import json
 import sys

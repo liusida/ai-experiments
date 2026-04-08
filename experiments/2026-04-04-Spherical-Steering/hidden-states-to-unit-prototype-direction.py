@@ -10,6 +10,7 @@ import stonesoup
 MODEL_ID = "Qwen/Qwen3.5-2B"
 _R = stonesoup.repo_root()
 _EXP = Path("experiments/2026-04-04-Spherical-Steering")
+_OUT_EXP = _R / Path("outputs") / _EXP.relative_to(Path("experiments"))
 
 _STAT_FULL = 0
 _STAT_FULL_NORM = 1
@@ -19,15 +20,15 @@ _STAT_LAST = 4
 
 _cache_dir = next(
     (
-        _R / "outputs/stonesoup" / _EXP / stem / "truthfulqa_answer_hidden_mean"
+        _OUT_EXP / stem / "truthfulqa_answer_hidden_mean"
         for stem in ("dataset-truthqa-to-hidden-states", "dataset-truthqa")
-        if (_R / "outputs/stonesoup" / _EXP / stem / "truthfulqa_answer_hidden_mean" / "meta.json").is_file()
+        if (_OUT_EXP / stem / "truthfulqa_answer_hidden_mean" / "meta.json").is_file()
     ),
     None,
 )
 if _cache_dir is None:
     raise FileNotFoundError(
-        f"no TruthfulQA cache under {_R / 'outputs/stonesoup' / _EXP}/*/truthfulqa_answer_hidden_mean/"
+        f"no TruthfulQA cache under {_OUT_EXP}/*/truthfulqa_answer_hidden_mean/"
     )
 
 _meta = json.loads((_cache_dir / "meta.json").read_text())

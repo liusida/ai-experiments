@@ -11,8 +11,8 @@ __pycache__/
 stonesoup/frontend/node_modules/
 stonesoup/frontend/dist/
 
-# Stonesoup cell figures (stonesoup.show)
-outputs/stonesoup/
+# Stonesoup cell outputs: plots (stonesoup.show), caches, etc. under outputs/<path>/ (see EXPERIMENT_PYTHON.md)
+outputs/
 
 # Cached input embedding tables (large torch checkpoints)
 data/embedding-layers/*.pt

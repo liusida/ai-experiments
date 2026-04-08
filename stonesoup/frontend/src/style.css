@@ -87,21 +87,23 @@ body {
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  /* Space between watch (left) and models (right); larger row-gap when the bar wraps. */
-  gap: 16px clamp(40px, 7vw, 80px);
+  /* Row gap when the bar wraps; column gap between sibling clusters on one row. */
+  gap: 10px 16px;
   align-items: center;
-  justify-content: space-between;
+  /* Watch cluster stays left; models cluster uses margin-left:auto to hug the right (including when wrapped). */
+  justify-content: flex-start;
   margin-bottom: 8px;
   flex-shrink: 0;
 }
 
 .toolbar-watch {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   align-items: center;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  overflow-x: auto;
 }
 
 .toolbar-models {
@@ -109,9 +111,17 @@ body {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+  justify-content: flex-end;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: min(560px, 100%);
+  margin-left: auto;
+}
+
+@media (max-width: 768px) {
+  .toolbar-models {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
 }
 
 .toolbar select {
@@ -129,21 +139,23 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1 1 240px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .toolbar .script-picker select#folder-select {
   flex: 0 1 auto;
   width: auto;
-  min-width: min(200px, 40vw);
-  max-width: min(380px, 50vw);
+  min-width: min(120px, 18vw);
+  max-width: 42%;
 }
 
+/* File list: ~38ch fits typical ``*.py`` names under experiments/. Tune in this file only. */
 .toolbar .script-picker select#file-select {
-  flex: 1 1 auto;
+  flex: 1 1 38ch;
   min-width: 0;
-  max-width: none;
+  max-width: min(48ch, 70%);
+  box-sizing: border-box;
 }
 
 .toolbar select:disabled {
@@ -160,10 +172,11 @@ body {
   color: inherit;
 }
 
+/* Repo combo: min ``ch`` from ``syncModelRepoInputWidthCh``; grows with row so space isn’t a dead zone on the right. */
 .toolbar .model-repo-combo {
-  flex: 1 1 120px;
-  min-width: min(100px, 28vw);
-  max-width: 260px;
+  flex: 1 1 12rem;
+  min-width: min(32ch, 100%);
+  max-width: 100%;
   display: block;
 }
 
@@ -174,6 +187,7 @@ body {
 }
 
 .toolbar .model-repo-input {
+  flex: 0 1 auto;
   padding: 6px 8px;
   border: 1px solid var(--vs-border);
   border-radius: 2px;
@@ -184,8 +198,9 @@ body {
 }
 
 .toolbar-models select#models-loaded-select {
-  min-width: min(100px, 22vw);
-  max-width: min(280px, 42vw);
+  min-width: min(18ch, 100%);
+  flex: 1 1 10rem;
+  max-width: min(2ch, 50%);
   padding: 5px 8px;
   border: 1px solid var(--vs-border);
   border-radius: 2px;
@@ -983,6 +998,23 @@ pre.stonesoup-dock-body {
   word-break: break-word;
 }
 
+#stonesoup-console-panel {
+  cursor: copy;
+}
+
+#stonesoup-console-panel .stonesoup-dock-toolbar {
+  cursor: copy;
+}
+
+#stonesoup-console-panel button {
+  cursor: pointer;
+}
+
+.stonesoup-console-pre.stonesoup-console-pre--copied {
+  box-shadow: inset 0 0 0 1px var(--vs-link);
+  transition: box-shadow 0.15s ease;
+}
+
 /* Auto-layout: sits in .kernel-vars-dock-bar next to { } kernel vars chip (bottom-left stack). */
 .kernel-vars-dock-bar {
   --kernel-dock-bar-height: 32px;
@@ -1388,7 +1420,7 @@ pre.stonesoup-dock-body {
   border-radius: 3px;
   background: color-mix(in srgb, var(--cell-accent) 18%, transparent);
   border: 1px solid color-mix(in srgb, var(--cell-accent) 35%, transparent);
-  /* Matches pipeline chip index (tab20 accent) */
+  /* Matches pipeline chip (tab20 accent from title hash) */
   color: var(--cell-accent);
   font-size: 11px;
   font-weight: 700;

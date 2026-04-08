@@ -13,12 +13,14 @@ from pathlib import Path
 # Directory under :func:`repo_root` served at HTTP ``/outputs``.
 OUTPUTS_SEGMENT = Path("outputs")
 
-# Cell artifacts: ``outputs/stonesoup/<repo-relative script path without .py>/``.
-# Example: ``experiments/Demo/foo.py`` → ``outputs/stonesoup/experiments/Demo/foo``.
-STONESOUP_OUTPUTS_SEGMENT = OUTPUTS_SEGMENT / "stonesoup"
+# Cell artifacts live directly under ``outputs/`` (no ``stonesoup/`` segment): strip a leading
+# ``experiments/`` from the repo-relative script path, drop ``.py``, mirror remaining dirs.
+# Example: ``experiments/Demo/foo.py`` → ``outputs/Demo/foo``;
+# ``experiments/2026-04-06-Hypersphere/embeddings.py`` → ``outputs/2026-04-06-Hypersphere/embeddings``.
+STONESOUP_OUTPUTS_SEGMENT = OUTPUTS_SEGMENT
 
-# Back-compat alias (older name referred to plots; use :data:`STONESOUP_OUTPUTS_SEGMENT`).
-CELL_WEB_OUTPUT_SUBPATH = STONESOUP_OUTPUTS_SEGMENT
+# Back-compat name: same tree as cell PNGs / caches (formerly suggested a ``stonesoup`` subdir).
+CELL_WEB_OUTPUT_SUBPATH = OUTPUTS_SEGMENT
 
 
 def repo_root() -> Path:
@@ -88,10 +90,14 @@ def script_dir() -> Path:
 
 
 def _per_script_outputs_subpath_relative_to_repo() -> Path:
-    """``outputs/stonesoup/<path/to/script_stem>`` relative to repo root."""
+    """``outputs/<…>/<script_stem>`` relative to repo root (leading ``experiments/`` stripped)."""
     root = repo_root()
     rel_script = script_path().relative_to(root)
-    return STONESOUP_OUTPUTS_SEGMENT / rel_script.with_suffix("")
+    parts = rel_script.parts
+    if parts[:1] == ("experiments",):
+        parts = parts[1:]
+    stem_rel = Path(*parts).with_suffix("") if parts else rel_script.with_suffix("")
+    return STONESOUP_OUTPUTS_SEGMENT / stem_rel
 
 
 def _plot_segment_relative_to_repo() -> Path:
@@ -100,12 +106,14 @@ def _plot_segment_relative_to_repo() -> Path:
 
 
 def outputs_dir() -> Path:
-    """Per-script directory under ``outputs/stonesoup/`` (mirrors ``__file__`` relative to the repo).
+    """Per-script directory under ``outputs/`` (mirrors ``__file__`` relative to the repo).
 
     Use this for any cell-produced files you want under the ``/outputs`` mount (plots, checkpoints,
     HTML assets, caches, etc.). Same tree as :func:`stonesoup.experiment.display.show`.
 
-    Repo-relative path shape: ``outputs/stonesoup/experiments/…/<stem>/``. Created if missing.
+    Repo-relative path shape: ``outputs/<…>/<stem>/`` where a leading ``experiments/`` segment is
+    removed from the script path and ``.py`` is dropped (same layout as on-disk cell outputs in
+    this repo). Created if missing.
     """
     d = repo_root() / _per_script_outputs_subpath_relative_to_repo()
     d.mkdir(parents=True, exist_ok=True)

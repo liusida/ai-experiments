@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
@@ -31,6 +31,7 @@ from stonesoup.backend.hf_models import (
     load_models_into_kernel,
     pool_key_from_b64,
     release_all_managed_bindings,
+    set_unload_diag_sink,
     unload_all_models_from_all_kernels,
     unload_binding_names_from_all_kernels,
     unload_pool_keys_from_all_kernels,
@@ -696,6 +697,49 @@ async def api_models_load(body: ModelsLoadBody) -> dict:
     return {"ok": True, "accepted": True}
 
 
+async def _run_unload_in_thread_with_diag(
+    unload_diag: bool,
+    fn: Callable[..., dict[str, Any]],
+    *args: Any,
+) -> dict[str, Any]:
+    """Run unload in a worker thread; optionally stream ``STONESOUP_UNLOAD_DEBUG`` lines to the UI Console."""
+    log_queue: queue.Queue[str | None] = queue.Queue()
+
+    def sink(line: str) -> None:
+        log_queue.put(line)
+
+    def worker() -> dict[str, Any]:
+        if unload_diag:
+            set_unload_diag_sink(sink)
+        try:
+            return fn(*args)
+        finally:
+            if unload_diag:
+                set_unload_diag_sink(None)
+                log_queue.put(None)
+
+    task = asyncio.create_task(asyncio.to_thread(worker))
+    if unload_diag:
+        await _broadcast_ws_json({"type": "app_log_start", "op": "model_unload"})
+        while True:
+            item = await asyncio.to_thread(log_queue.get)
+            if item is None:
+                break
+            text = item if item.endswith("\n") else item + "\n"
+            await _broadcast_ws_json({"type": "app_log", "stream": "stdout", "text": text})
+    try:
+        result = await task
+    except Exception as exc:
+        if unload_diag:
+            await _broadcast_ws_json(
+                {"type": "app_log_end", "ok": False, "op": "model_unload", "error": str(exc)}
+            )
+        raise
+    if unload_diag:
+        await _broadcast_ws_json({"type": "app_log_end", "ok": True, "op": "model_unload"})
+    return result
+
+
 @app.post("/api/models/unload")
 async def api_models_unload(body: ModelsUnloadBody) -> dict:
     pool_raw = body.pool_keys_b64
@@ -719,16 +763,36 @@ async def api_models_unload(body: ModelsUnloadBody) -> dict:
             raise HTTPException(status_code=400, detail="Provide at least one pool_key_b64.")
     elif body.names is not None and not body.names:
         raise HTTPException(status_code=400, detail="Provide at least one model name or null for all.")
+    unload_diag = os.environ.get("STONESOUP_UNLOAD_DEBUG", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     async with _all_kernel_run_locks():
         kernels = list(state.kernel_cache.values())
         try:
             if kernels:
                 if use_pool:
-                    result = await asyncio.to_thread(unload_pool_keys_from_all_kernels, kernels, decoded)
+                    result = await _run_unload_in_thread_with_diag(
+                        unload_diag,
+                        unload_pool_keys_from_all_kernels,
+                        kernels,
+                        decoded,
+                    )
                 elif body.names is None:
-                    result = await asyncio.to_thread(unload_all_models_from_all_kernels, kernels)
+                    result = await _run_unload_in_thread_with_diag(
+                        unload_diag,
+                        unload_all_models_from_all_kernels,
+                        kernels,
+                    )
                 else:
-                    result = await asyncio.to_thread(unload_binding_names_from_all_kernels, kernels, body.names)
+                    result = await _run_unload_in_thread_with_diag(
+                        unload_diag,
+                        unload_binding_names_from_all_kernels,
+                        kernels,
+                        body.names,
+                    )
             else:
                 result = {"unloaded": [], "missing": []}
         except Exception as exc:
