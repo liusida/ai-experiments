@@ -49,7 +49,7 @@ import html
 import torch
 import torch.nn.functional as F
 
-PROMPT = "1 x 1= 1; 7 + 2 = "
+PROMPT = "The capital of France is Paris. The capital of Germany is"
 TOP_K = 3
 
 
