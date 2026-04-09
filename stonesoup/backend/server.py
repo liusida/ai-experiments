@@ -114,6 +114,11 @@ def _kernel_cache_key(path: Path) -> str:
     return path.resolve().as_posix()
 
 
+def _repo_root_abs_posix() -> str:
+    """Absolute repo root for editor deeplinks (POSIX slashes)."""
+    return stonesoup_root().resolve().as_posix()
+
+
 def _repo_relative_display(path: Path) -> str:
     root = stonesoup_root().resolve()
     try:
@@ -319,6 +324,7 @@ def _cells_payload() -> dict[str, Any]:
         "type": "cells",
         "revision": state.revision,
         "path": rel,
+        "repo_root": _repo_root_abs_posix(),
         "cells": [c.to_dict() for c in state.cells],
         "changed_cell_indices": list(state.last_changed_cell_indices),
     }
@@ -409,7 +415,7 @@ except OSError as exc:
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"ok": True}
+    return {"ok": True, "repo_root": _repo_root_abs_posix()}
 
 
 def _mtime_or_zero(path: Path) -> float:
@@ -480,6 +486,7 @@ async def api_watch(body: WatchBody) -> dict:
         "n_cells": len(state.cells),
         "cells": cp["cells"],
         "changed_cell_indices": cp["changed_cell_indices"],
+        "repo_root": cp["repo_root"],
     }
 
 
@@ -493,6 +500,7 @@ async def api_cells() -> dict:
     return {
         "revision": state.revision,
         "path": rel,
+        "repo_root": _repo_root_abs_posix(),
         "cells": [c.to_dict() for c in state.cells],
         "changed_cell_indices": list(state.last_changed_cell_indices),
     }

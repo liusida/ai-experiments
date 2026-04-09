@@ -57,7 +57,7 @@ function setEditorPref(v: EditorPref) {
   localStorage.setItem(EDITOR_PREF_KEY, v);
 }
 
-/** Deeplink to open a file at 1-based line:col in the chosen editor. */
+/** Deeplink to open a file at 1-based line:col in the chosen editor. ``absolutePath`` must be a real filesystem path. */
 function editorFileUrl(absolutePath: string, line: number, col: number = 1): string {
   let p = absolutePath.trim().replace(/^file:\/\//i, "");
   p = p.replace(/\\/g, "/");
@@ -69,11 +69,25 @@ function editorFileUrl(absolutePath: string, line: number, col: number = 1): str
   return `${scheme}://file${p}:${line}:${col}`;
 }
 
+/** Repo-relative script path (as in the toolbar) → absolute path for editor URIs. */
+function absoluteRepoPathForEditor(repoRelative: string): string {
+  const t = repoRelative.trim().replace(/\\/g, "/");
+  if (!t) return "";
+  if (/^[A-Za-z]:\//.test(t)) return t;
+  if (repoRootAbs) {
+    const root = repoRootAbs.replace(/\/$/, "");
+    const rest = t.replace(/^\/+/, "");
+    return `${root}/${rest}`;
+  }
+  if (!t.startsWith("/")) return `/${t}`;
+  return t;
+}
+
 function cellEditorHref(pathForLink: string | null | undefined, startLine: number): string {
   const t = pathForLink?.trim() ?? "";
   if (!t) return "";
   const line = Number.isFinite(startLine) && startLine >= 1 ? Math.floor(Number(startLine)) : 1;
-  return editorFileUrl(t, line);
+  return editorFileUrl(absoluteRepoPathForEditor(t), line);
 }
 
 function escapeHtmlAttr(s: string): string {
@@ -127,6 +141,29 @@ async function readApiJson(r: Response): Promise<unknown> {
     throw new Error(`HTTP ${r.status}: response is not JSON.${hint}\n${preview}`);
   }
 }
+
+/** Absolute repo root from server (POSIX-style slashes); used for Cursor/VS Code file deeplinks. */
+let repoRootAbs = "";
+
+function applyRepoRootFromPayload(data: { repo_root?: unknown }) {
+  const rr = data.repo_root;
+  if (typeof rr === "string" && rr.trim()) {
+    repoRootAbs = rr.trim().replace(/\\/g, "/");
+  }
+}
+
+async function fetchRepoRoot(): Promise<void> {
+  try {
+    const r = await fetch(`${apiBase}/api/health`);
+    if (!r.ok) return;
+    const j = (await readApiJson(r)) as { repo_root?: unknown };
+    applyRepoRootFromPayload(j);
+  } catch {
+    /* ignore */
+  }
+}
+
+void fetchRepoRoot();
 
 function wsUrl(): string {
   if (import.meta.env.DEV) {
@@ -1580,9 +1617,11 @@ function applyCellsFromServer(
     path: string | null;
     cells: readonly unknown[] | Cell[];
     changed_cell_indices?: unknown;
+    repo_root?: unknown;
   },
   opts?: { forceResetOutputs?: boolean },
 ) {
+  applyRepoRootFromPayload(data);
   const incomingPath = data.path ?? null;
   const pathChanged = (incomingPath ?? "") !== (lastPath ?? "");
   if (pathChanged || opts?.forceResetOutputs) {
@@ -2019,6 +2058,7 @@ function connectWs() {
           path: (data as { path?: string | null }).path ?? null,
           cells,
           changed_cell_indices: (data as { changed_cell_indices?: unknown }).changed_cell_indices,
+          repo_root: (data as { repo_root?: unknown }).repo_root,
         });
         setStatus(`rev ${revision} · ${cells.length} cells`);
       } else if (data.type === "run_start") {
@@ -3602,6 +3642,7 @@ async function postWatch() {
       path?: string | null;
       cells?: Cell[];
       changed_cell_indices?: unknown;
+      repo_root?: unknown;
     };
     if (!r.ok) throw new Error(j.detail || r.statusText);
     saveWatchPathCookie(path);
@@ -3611,6 +3652,7 @@ async function postWatch() {
         path: typeof j.path === "string" || j.path === null ? j.path : null,
         cells: j.cells,
         changed_cell_indices: j.changed_cell_indices,
+        repo_root: j.repo_root,
       });
     } else {
       outputs.clear();

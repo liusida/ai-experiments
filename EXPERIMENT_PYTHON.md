@@ -36,6 +36,7 @@ Below, **each heading is one feature area**—details for that feature appear **
 ## Rich stdout
 
 - **Default:** escaped plain text. For **HTML** or **Markdown**, the **first** line of stdout must be `# stonesoup:render=html` or `# stonesoup:render=md` / `markdown`; then print the body. **No** other stdout before that line (`text` / `auto` = plain, same as skipping the hint).
+- **Prints before plots:** If you `print()` status lines and then call `stonesoup.show()`, put **`print(stonesoup.STONESOUP_RENDER_HTML, end="")` as the first statement in the cell** so the combined stdout still starts with the hint. Use **`stonesoup.show(..., emit_render_hint=False)`** for each figure so `show()` does not insert another hint line after your prints (only the first line is the render mode; repeated hints in the middle look noisy and do not re-switch mode).
 - The UI hides the hint in the shown/copied body and offers a chip to flip rich vs plain. Helpers: `stonesoup.STONESOUP_RENDER_HTML`, `STONESOUP_RENDER_MD`, or `stonesoup_render_prefix("html")` (include the newline).
 - If the HTML includes **bitmaps** (`<img>`, CSS `background-image`, etc.), prefer **URLs under `/outputs/…`** (files saved next to `stonesoup.show()` output) rather than **`data:` / base64** blobs—see [Paths and writing outputs](#paths-and-writing-outputs).
 - Cell HTML is **sanitized** (e.g. DOMPurify): rely on **`style` attributes** for layout you need preserved; embedded **`<style>`…`</style>`** blocks are usually **removed or emptied**, so class-only CSS will not apply.
@@ -47,7 +48,27 @@ Below, **each heading is one feature area**—details for that feature appear **
 - **`stonesoup.repo_root()`** — repo root (`STONESOUP_ROOT` if set, else editable-install layout). Pair with **`stonesoup.data_dir()`** for `data/` (created automatically).
 - **`stonesoup.outputs_dir()`** — per-script directory under **`outputs/`** (HTTP **`/outputs/…`**): the watched file’s path relative to the repo with a leading **`experiments/`** removed if present, **`.py`** dropped, remaining directories kept (e.g. `experiments/2026-04-06-Foo/bar.py` → `outputs/2026-04-06-Foo/bar/`). Use for figures, caches, or any cell artifact you want web-addressable. **Same directory as `stonesoup.show()`** saves PNGs to. **`stonesoup.plot_dir()`** is a synonym (historical name). Created automatically.
 - **`stonesoup.script_dir()`** — folder containing the watched / running `.py` (e.g. stuff you keep next to the script, not under `outputs/`).
-- **HTML with images:** save PNGs (or other static assets) under **`stonesoup.outputs_dir()`** (or anywhere under the repo’s **`outputs/…`** tree), build **`src`** as **`"/" + path.relative_to(stonesoup.repo_root()).as_posix()`** (same pattern as `stonesoup.show()`). Optional query (e.g. `?cb=mtime`) avoids stale cache after overwrite. **Do not** embed large **`data:image/...;base64,...`** strings in printed HTML—view-source stays readable, payloads stay smaller, and the browser can cache files like normal HTTP assets.
+- **HTML with images:** save PNGs (or other static assets) under **`stonesoup.outputs_dir()`** (or anywhere under the repo’s **`outputs/…`** tree), build **`src`** as **`"/" + path.relative_to(stonesoup.repo_root()).as_posix()`** (same pattern as `stonesoup.show()`), or use **`stonesoup.experiment.output_url_path(path)`** for the same path plus an optional cache-busting `?t=` query. **Do not** embed large **`data:image/...;base64,...`** strings in printed HTML—view-source stays readable, payloads stay smaller, and the browser can cache files like normal HTTP assets.
+
+---
+
+## Shared helpers for new code (`stonesoup.experiment`)
+
+The **expanded** helpers in this section (safe Hub stems, text encoding, decoder/hook capture, `output_url_path`, optional unload, render re-exports, etc.) are the recommended way to write **new** experiment code starting **2026-04-09**. Scripts written before that date may still inline equivalent logic; nothing requires migrating them.
+
+**Learn the new API:** step through [`experiments/Demo/stonesoup-experiment-api-demo.py`](experiments/Demo/stonesoup-experiment-api-demo.py) in Stonesoup (paths, `load_model`, both capture modes, `show`, hand-built HTML, `check_abort`).
+
+For **new** work, import shared utilities from **`stonesoup.experiment`** (same symbols are lazy-exported where noted):
+
+| Concern | Symbols / module |
+|--------|-------------------|
+| Hub id → safe filename stem | `hf_repo_id_safe_stem` (`names`) |
+| Tokenizer / batching | `inner_tokenizer`, `encode_text_inputs`, `ensure_pad_token_via_eos` (`hf_inputs`) |
+| Decoder layer list | `decoder_blocks` (`lm_stack`) |
+| Hidden states via hooks | `capture_embed_and_post_blocks`, `capture_pre_block0_and_post_blocks` (`hidden_hooks`) |
+| Matplotlib / URLs | `show`, `configure_matplotlib_agg`, `output_url_path` (`display`) |
+| Unload bindings by repo id | `unload_loaded_names_for_repo` (`models`) |
+| Rich stdout hints | `STONESOUP_RENDER_HTML`, …, `stonesoup_render_prefix` (same strings as `stonesoup`) |
 
 ---
 

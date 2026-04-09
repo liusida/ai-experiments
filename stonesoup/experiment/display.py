@@ -9,6 +9,29 @@ from typing import Any
 
 from .paths import outputs_dir, repo_root, script_path
 
+
+def configure_matplotlib_agg() -> None:
+    """Use the Agg backend (no GUI). Safe to call once per Stonesoup kernel."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+
+
+def output_url_path(path: Path, *, cache_bust: bool = True) -> str:
+    """Build a web path under the repo for static files (e.g. ``/outputs/…?t=…``).
+
+    ``path`` must be under :func:`repo_root`. Same cache-busting query as :func:`show` when
+    ``cache_bust`` is True.
+    """
+    root = repo_root()
+    abs_path = path.resolve()
+    rel = abs_path.relative_to(root)
+    rel_posix = rel.as_posix()
+    if cache_bust:
+        t_ms = abs_path.stat().st_mtime_ns // 1_000_000
+        return f"/{rel_posix}?t={t_ms}"
+    return f"/{rel_posix}"
+
 # Bundled under ``misc/fonts/`` (Noto Sans / Hebrew + Noto Sans CJK). Override with env if needed:
 # STONESOUP_MATPLOTLIB_NOTO_DIR (dir containing NotoSans-*.ttf / Hebrew), STONESOUP_MATPLOTLIB_CJK_FONT (.ttc path).
 
@@ -131,14 +154,20 @@ def show(
     dpi: int = 120,
     format: str = "png",
     basename: str | None = None,
+    emit_render_hint: bool = True,
     **savefig_kw: Any,
 ) -> str:
     """Save the current (or given) Matplotlib figure using :func:`outputs_dir` and print HTML.
 
     Same directory as :func:`outputs_dir`: ``outputs/<…>/<script_stem>/`` under the repo (leading
     ``experiments/`` stripped from the watched path; see :mod:`stonesoup.experiment.paths`).
-    The backend serves those files under ``/outputs/…`` (Vite proxies ``/outputs`` in dev). Stdout
-    starts with ``# stonesoup:render=html`` for the following ``<img>`` HTML.
+    The backend serves those files under ``/outputs/…`` (Vite proxies ``/outputs`` in dev). By
+    default, stdout starts with ``# stonesoup:render=html`` for the following ``<img>`` HTML (the UI
+    only reads that hint from the **first** line of the cell’s combined stdout).
+
+    If you ``print()`` before ``show()``, put ``print(stonesoup.STONESOUP_RENDER_HTML, end="")`` at
+    the **very start** of the cell so line 1 is still the hint, then use
+    ``stonesoup.show(..., emit_render_hint=False)`` for each plot so you do not repeat the hint.
 
     If ``basename`` is set, the file is ``{basename}.{format}`` (no directory components; ``.`` in
     ``basename`` is allowed so you can pass ``foo.v2`` for ``foo.v2.png``). Otherwise a random name
@@ -192,6 +221,10 @@ def show(
     else:
         name = f"{uuid.uuid4().hex}.{fmt}"
     abs_path = out_dir / name
+    # Never forward Stonesoup-only flags to ``Figure.savefig`` (e.g. legacy wrappers that put
+    # ``emit_render_hint`` in ``**kwargs`` when ``show`` had no explicit parameter).
+    _emit = savefig_kw.pop("emit_render_hint", emit_render_hint)
+    emit_render_hint = bool(_emit)
     kw = {"dpi": dpi, "bbox_inches": "tight", **savefig_kw}
     _ensure_matplotlib_font_stack()
     _apply_font_family_to_figure(fig)
@@ -216,7 +249,8 @@ def show(
 
     try:
         # Two-part stdout: render hint then HTML (see peelStonesoupRenderHint in the UI).
-        print(STONESOUP_RENDER_HTML, end="")
+        if emit_render_hint:
+            print(STONESOUP_RENDER_HTML, end="")
         print(
             f'<p class="stonesoup-show"><img src="{src}" alt="stonesoup.show()" loading="lazy" '
             f'style="max-width:100%;height:auto" /></p>',

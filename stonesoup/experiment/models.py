@@ -87,3 +87,20 @@ def load_model(ref: str) -> tuple[Any, Any]:
         bundle = resolve_loaded_bundle(kernel, ref_stripped)
     processor = getattr(bundle, "processor", None) or bundle.tokenizer
     return bundle.model, processor
+
+
+def unload_loaded_names_for_repo(repo_id: str) -> None:
+    """Unload all kernel bindings whose ``repo_id`` matches (frees pool refs when refcount hits zero).
+
+    No-op if not running inside a Stonesoup cell (no active kernel). Only affects bindings in
+    **this** kernel whose listed ``repo_id`` equals the given string.
+    """
+    from stonesoup.backend.hf_models import unload_models_from_kernel
+    from stonesoup.backend.kernel import active_kernel
+
+    kernel = active_kernel.get()
+    if kernel is None:
+        return
+    names = [r["name"] for r in list_loaded_models() if r.get("repo_id") == repo_id]
+    if names:
+        unload_models_from_kernel(kernel, names=names)
