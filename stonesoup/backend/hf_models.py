@@ -468,6 +468,48 @@ def _repo_id_from_models_cache_folder(name: str) -> str | None:
     return f"{org}/{repo_name}"
 
 
+def _resolve_repo_id_from_local_cache_case_insensitive(repo_id: str) -> str:
+    """If ``hub/models--*`` already exists for this repo (any casing), return that folder's repo id.
+
+    Hugging Face uses the repo id string in the cache path; ``a/B`` and ``a/b`` become two
+    directories. Reusing the on-disk spelling avoids a duplicate download and duplicate pool keys.
+    """
+    rid = repo_id.strip()
+    if not rid or "/" not in rid:
+        return rid
+    hub = _hf_hub_cache_root()
+    if not hub.is_dir():
+        return rid
+    key = rid.casefold()
+    matches: list[str] = []
+    try:
+        for p in hub.iterdir():
+            if not p.is_dir():
+                continue
+            decoded = _repo_id_from_models_cache_folder(p.name)
+            if decoded is None:
+                continue
+            if decoded.casefold() == key:
+                matches.append(decoded)
+    except OSError:
+        return rid
+    if not matches:
+        return rid
+    if rid in matches:
+        return rid
+    if len(matches) == 1:
+        return matches[0]
+    matches.sort()
+    chosen = matches[0]
+    logger.warning(
+        "Multiple HF hub cache folders match %r case-insensitively; using %r (also: %s)",
+        rid,
+        chosen,
+        [m for m in matches if m != chosen],
+    )
+    return chosen
+
+
 def _list_cached_model_repo_ids_from_disk(hub: Path) -> list[str]:
     if not hub.is_dir():
         return []
@@ -575,6 +617,7 @@ def load_models_into_kernel(
             repo_id = str(item.get("repo_id") or "").strip()
             if not repo_id:
                 raise ValueError("Each model entry must include a non-empty repo_id.")
+            repo_id = _resolve_repo_id_from_local_cache_case_insensitive(repo_id)
             requested_name = item.get("name")
             model_kind = _normalize_model_kind(
                 str(item.get("model_kind") or default_model_kind or "auto")
@@ -791,6 +834,39 @@ def unload_models_from_kernel(kernel: Kernel, *, names: list[str] | None = None)
         "missing": missing,
         "loaded_now": list_loaded_models(kernel),
     }
+
+
+def clear_experiment_kernel_namespace(kernel: Kernel) -> dict[str, Any]:
+    """Remove every name from this kernel's globals except core interpreter keys.
+
+    Hugging Face bindings for *this* kernel are torn down via :func:`unload_models_from_kernel`
+    so managed state and shared-pool refcounts stay consistent. Weights may remain in the process
+    pool if another kernel or refcount still holds the same checkpoint.
+    """
+    state = _state_for(kernel)
+    convenience_before = sorted(state.convenience_aliases)
+    hf = unload_models_from_kernel(kernel, names=None)
+    cleared: list[str] = [str(x["name"]) for x in hf.get("unloaded", []) if x.get("name")]
+    for n in convenience_before:
+        if n not in cleared:
+            cleared.append(n)
+    protected = {
+        "__name__",
+        "__builtins__",
+        "__doc__",
+        "__package__",
+        "__loader__",
+        "__spec__",
+        "__file__",
+        "__cached__",
+    }
+    for key in list(kernel.globals.keys()):
+        if key in protected or key.startswith("__"):
+            continue
+        del kernel.globals[key]
+        cleared.append(key)
+    cleared.sort(key=lambda s: (s.lower(), s))
+    return {"cleared": cleared, "loaded_now": list_loaded_models(kernel)}
 
 
 def release_all_managed_bindings(kernel: Kernel) -> None:

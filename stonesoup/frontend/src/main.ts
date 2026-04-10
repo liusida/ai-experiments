@@ -112,6 +112,8 @@ const TOOLBAR_ICON_ABORT = `<svg xmlns="http://www.w3.org/2000/svg" width="16" h
 const TOOLBAR_ICON_MODEL_LOAD = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 const TOOLBAR_ICON_MODEL_UNLOAD = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="m9 9 6 6M15 9l-6 6"/></svg>`;
 const TOOLBAR_ICON_MODEL_UNLOAD_ALL = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="2" width="11" height="11" rx="1.5" stroke-width="1.65"/><path stroke-width="1.65" d="M5 4l7 7M12 4l-7 7"/><rect x="10" y="11" width="11" height="11" rx="1.5" stroke-width="2"/><path stroke-width="2" d="M12 13l7 7M19 13l-7 7"/></svg>`;
+/** RAM-style chip: free memory for the current watched experiment only. */
+const TOOLBAR_ICON_FREE_MEMORY = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="6" y1="9" x2="18" y2="9"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="6" y1="15" x2="18" y2="15"/><line x1="4" y1="20" x2="20" y2="4" stroke-width="2.25"/></svg>`;
 
 /** Manual resize / saved layout: must leave room below `.cell-head` for output */
 const CELL_LAYOUT_MIN_W = 220;
@@ -381,6 +383,7 @@ app.innerHTML = `
         <div class="kernel-vars-toolbar stonesoup-dock-toolbar">
           <span class="kernel-vars-title stonesoup-dock-title">Variables</span>
           <button type="button" class="btn-icon" id="kernel-vars-refresh" title="Refresh list">⟳</button>
+          <button type="button" class="btn-icon" id="kernel-vars-free-memory" title="Clear all variables for this experiment (including model/tokenizer bindings in this kernel). Shared checkpoints may stay in memory if still used elsewhere." aria-label="Clear all variables (this experiment)">${TOOLBAR_ICON_FREE_MEMORY}</button>
           <button type="button" class="btn-icon" id="kernel-vars-collapse" title="Hide variables">▾</button>
         </div>
         <div class="kernel-vars-scroll stonesoup-dock-body">
@@ -439,6 +442,7 @@ const kernelVarsEmpty = app.querySelector<HTMLParagraphElement>("#kernel-vars-em
 const kernelVarsToggle = app.querySelector<HTMLButtonElement>("#kernel-vars-toggle")!;
 const kernelVarsCollapse = app.querySelector<HTMLButtonElement>("#kernel-vars-collapse")!;
 const kernelVarsRefresh = app.querySelector<HTMLButtonElement>("#kernel-vars-refresh")!;
+const kernelVarsFreeMemory = app.querySelector<HTMLButtonElement>("#kernel-vars-free-memory")!;
 const kernelVarsSessions = app.querySelector<HTMLSpanElement>("#kernel-vars-sessions")!;
 const stonesoupConsoleRoot = app.querySelector<HTMLDivElement>("#stonesoup-console")!;
 const stonesoupConsolePanel = app.querySelector<HTMLDivElement>("#stonesoup-console-panel")!;
@@ -1904,6 +1908,29 @@ kernelVarsCollapse.addEventListener("click", () => {
 });
 
 kernelVarsRefresh.addEventListener("click", () => void fetchKernelVars());
+
+async function clearVariablesCurrentExperimentKernel() {
+  try {
+    const r = await fetch(`${apiBase}/api/kernel/free-memory`, { method: "POST" });
+    const j = (await readApiJson(r)) as {
+      detail?: string;
+      cleared?: unknown[];
+    };
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    await fetchKernelVars();
+    void fetchLoadedModels();
+    const n = Array.isArray(j.cleared) ? j.cleared.length : 0;
+    setStatus(
+      n > 0
+        ? `Cleared ${n} variable${n === 1 ? "" : "s"} in this experiment`
+        : "No user variables to clear",
+    );
+  } catch (e) {
+    setStatus(String(e));
+  }
+}
+
+kernelVarsFreeMemory.addEventListener("click", () => void clearVariablesCurrentExperimentKernel());
 
 function trimConsoleBuffer(s: string): string {
   if (s.length <= CONSOLE_BUFFER_MAX) return s;

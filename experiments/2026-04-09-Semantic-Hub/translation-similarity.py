@@ -11,9 +11,20 @@ from stonesoup.experiment import (
     inner_tokenizer,
 )
 
-MODEL_ID = "bigscience/bloom-1b7"
-TEXT_EN = "The cat sat on the mat."
-TEXT_ZH = "猫坐在垫子上。"
+MODEL_ID = "bigscience/bloom-7b1"
+# Short parallel EN–ZH pairs (period / full stop aligned for the '.' vs '。' plot).
+TEXT_PAIRS: list[tuple[str, str]] = [
+    ("The cat sat on the mat.", "猫坐在垫子上。"),
+    ("The dog runs fast.", "狗跑得很快。"),
+    ("She reads a book.", "她在读一本书。"),
+    ("Water is essential for life.", "水对生命至关重要。"),
+    ("The sun rises in the east.", "太阳从东方升起。"),
+    ("I love learning new things.", "我喜欢学习新事物。"),
+    ("Spring is a beautiful season.", "春天是美丽的季节。"),
+    ("Computers can process data.", "计算机可以处理数据。"),
+    ("Music brings joy to people.", "音乐给人们带来快乐。"),
+    ("Tomorrow will be a good day.", "明天会是美好的一天。"),
+]
 # Prepend BOS so the first *content* token is not the only “sink” position.
 PREPEND_BOS = True
 
@@ -51,38 +62,83 @@ def prepend_bos_tensor(inputs: dict[str, torch.Tensor]) -> dict[str, torch.Tenso
     }
 
 
-inputs_en = encode_text_inputs(proc, TEXT_EN, device=device)
-inputs_zh = encode_text_inputs(proc, TEXT_ZH, device=device)
-if PREPEND_BOS:
-    inputs_en = prepend_bos_tensor(inputs_en)
-    inputs_zh = prepend_bos_tensor(inputs_zh)
-
-stack_en, stage_names = capture_embed_and_post_blocks(model, inputs_en, use_cache=False)
-stack_zh, _ = capture_embed_and_post_blocks(model, inputs_zh, use_cache=False)
-
-en_ids = inputs_en["input_ids"][0].tolist()
-zh_ids = inputs_zh["input_ids"][0].tolist()
-en_labels = [tok.decode([i]) for i in en_ids]
-zh_labels = [tok.decode([i]) for i in zh_ids]
-print("tokens EN:", en_labels)
-print("tokens ZH:", zh_labels)
-
-# %% Cosine similarity: each (EN pos, ZH pos) at every layer
 def pairwise_cos(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     a = F.normalize(a.float(), dim=-1)
     b = F.normalize(b.float(), dim=-1)
     return a @ b.T
 
 
-layers: list[torch.Tensor] = []
-for li in range(len(stage_names)):
+def _first_label_index(labels: list[str], token: str) -> int:
+    for i, t in enumerate(labels):
+        if t == token:
+            return i
+    raise ValueError(f"no token {token!r} in {labels!r}")
+
+
+per_pair_mean_scalar: list[float] = []
+per_layer_mean_over_pairs: list[torch.Tensor] = []
+dot_stop_curves: list[torch.Tensor] = []
+COS_SIM_LAYERS_EN_ZH: torch.Tensor | None = None
+en_labels: list[str] = []
+zh_labels: list[str] = []
+stage_names: list[str] = []
+
+for pair_idx, (TEXT_EN, TEXT_ZH) in enumerate(TEXT_PAIRS):
     stonesoup.check_abort()
-    he = stack_en[li, 0]
-    hz = stack_zh[li, 0]
-    layers.append(pairwise_cos(he, hz))
-# (num_stages, len_en, len_zh): [layer, en_i, zh_j] = cos(h_en_i, h_zh_j)
-COS_SIM_LAYERS_EN_ZH = torch.stack(layers, dim=0)
-print("COS_SIM_LAYERS_EN_ZH", COS_SIM_LAYERS_EN_ZH.shape, flush=True)
+    inputs_en = encode_text_inputs(proc, TEXT_EN, device=device)
+    inputs_zh = encode_text_inputs(proc, TEXT_ZH, device=device)
+    if PREPEND_BOS:
+        inputs_en = prepend_bos_tensor(inputs_en)
+        inputs_zh = prepend_bos_tensor(inputs_zh)
+
+    stack_en, stage_names = capture_embed_and_post_blocks(model, inputs_en, use_cache=False)
+    stack_zh, _ = capture_embed_and_post_blocks(model, inputs_zh, use_cache=False)
+
+    layers: list[torch.Tensor] = []
+    for li in range(len(stage_names)):
+        stonesoup.check_abort()
+        he = stack_en[li, 0]
+        hz = stack_zh[li, 0]
+        layers.append(pairwise_cos(he, hz))
+    cos_k = torch.stack(layers, dim=0)
+    # (num_stages, len_en, len_zh): [layer, en_i, zh_j] = cos(h_en_i, h_zh_j)
+    per_pair_mean_scalar.append(float(cos_k.mean().item()))
+    per_layer_mean_over_pairs.append(cos_k.mean(dim=(1, 2)))
+
+    if pair_idx == 0:
+        COS_SIM_LAYERS_EN_ZH = cos_k
+        en_ids = inputs_en["input_ids"][0].tolist()
+        zh_ids = inputs_zh["input_ids"][0].tolist()
+        en_labels = [tok.decode([i]) for i in en_ids]
+        zh_labels = [tok.decode([i]) for i in zh_ids]
+        print("tokens EN (pair 0):", en_labels)
+        print("tokens ZH (pair 0):", zh_labels)
+
+    _en_ids = inputs_en["input_ids"][0].tolist()
+    _zh_ids = inputs_zh["input_ids"][0].tolist()
+    _en_labels = [tok.decode([i]) for i in _en_ids]
+    _zh_labels = [tok.decode([i]) for i in _zh_ids]
+
+    try:
+        _ei_dot = _first_label_index(_en_labels, ".")
+        _zj_stop = _first_label_index(_zh_labels, "。")
+    except ValueError:
+        pass
+    else:
+        dot_stop_curves.append(cos_k[:, _ei_dot, _zj_stop].detach().float())
+
+assert COS_SIM_LAYERS_EN_ZH is not None
+COS_SIM_PER_LAYER_MEAN_10_PAIRS = torch.stack(per_layer_mean_over_pairs, dim=0).mean(dim=0)
+print(
+    "mean cosine (all positions, all layers), averaged over pairs:",
+    float(sum(per_pair_mean_scalar) / len(per_pair_mean_scalar)),
+    flush=True,
+)
+print("per-pair mean cos:", [round(x, 4) for x in per_pair_mean_scalar], flush=True)
+print("COS_SIM_LAYERS_EN_ZH (pair 0)", COS_SIM_LAYERS_EN_ZH.shape, flush=True)
+print("COS_SIM_PER_LAYER_MEAN_10_PAIRS", COS_SIM_PER_LAYER_MEAN_10_PAIRS.shape, flush=True)
+
+# %% Cosine similarity: each (EN pos, ZH pos) at every layer (pair 0 shown below)
 
 _, n_en, n_zh = COS_SIM_LAYERS_EN_ZH.shape
 mean_en_zh = COS_SIM_LAYERS_EN_ZH.float().mean(dim=0).reshape(-1)
@@ -95,7 +151,10 @@ for rank in range(k_top):
     v = float(vals[rank].item())
     TOP3_EN_ZH_MEAN_LAYER.append((en_labels[ei], zh_labels[zj], v))
     pair = f"{en_labels[ei]!r} vs {zh_labels[zj]!r}"
-    print(f"top-{rank + 1} (mean over layers): {pair}  mean_cos={v:.4f}", flush=True)
+    print(
+        f"top-{rank + 1} (pair 0 only, mean over layers): {pair}  mean_cos={v:.4f}",
+        flush=True,
+    )
 
 # %% Plot: one heatmap per layer (y = English token, x = Chinese token)
 import numpy as np
@@ -144,14 +203,16 @@ for j in range(n_st, len(axes_flat)):
     axes_flat[j].set_visible(False)
 fig.supxlabel("Chinese token")
 fig.supylabel("English token")
+TEXT_EN_0, TEXT_ZH_0 = TEXT_PAIRS[0]
 fig.suptitle(
-    f"EN: {TEXT_EN}\nZH: {TEXT_ZH}\nCosine similarity: EN × ZH per layer — {MODEL_ID}",
+    f"Pair 1/10 (example heatmaps)\nEN: {TEXT_EN_0}\nZH: {TEXT_ZH_0}\n"
+    f"Cosine similarity: EN × ZH per layer — {MODEL_ID}",
     fontsize=7,
 )
 fig.colorbar(last_im, ax=axes_flat[:n_st].tolist(), shrink=0.5, label="cos")
 stonesoup.show(fig, basename=f"{hf_repo_id_safe_stem(MODEL_ID)}_en_zh_cos_layers", dpi=120)
 
-# %% Plot: '.' vs '。' cosine similarity vs layer (line)
+# %% Plot: '.' vs '。' cosine similarity vs layer (line), mean over pairs
 import numpy as np
 
 from stonesoup.experiment import configure_matplotlib_agg, hf_repo_id_safe_stem
@@ -159,30 +220,30 @@ from stonesoup.experiment import configure_matplotlib_agg, hf_repo_id_safe_stem
 configure_matplotlib_agg()
 import matplotlib.pyplot as plt
 
-
-def _first_label_index(labels: list[str], token: str) -> int:
-    for i, t in enumerate(labels):
-        if t == token:
-            return i
-    raise ValueError(f"no token {token!r} in {labels!r}")
-
-
-try:
-    _ei_dot = _first_label_index(en_labels, ".")
-    _zj_stop = _first_label_index(zh_labels, "。")
-except ValueError as exc:
-    print("line plot skipped:", exc, flush=True)
+if not dot_stop_curves:
+    print("line plot skipped: no '.' vs '。' curves collected", flush=True)
 else:
-    _curve = COS_SIM_LAYERS_EN_ZH[:, _ei_dot, _zj_stop].detach().float().cpu().numpy()
-    COS_SIM_DOT_VS_IDEOGRAPHIC_STOP_VS_LAYER = _curve  # (num_stages,) '.' vs '。'
+    _curve = torch.stack(dot_stop_curves, dim=0).mean(dim=0).cpu().numpy()
+    COS_SIM_DOT_VS_IDEOGRAPHIC_STOP_VS_LAYER = _curve  # (num_stages,) mean over pairs
     _n_st = len(_curve)
     _fig, _ax = plt.subplots(figsize=(7, 4.0))
-    _fig.suptitle(f"EN: {TEXT_EN}\nZH: {TEXT_ZH}", fontsize=8)
-    _ax.plot(np.arange(_n_st), _curve, marker="o", ms=3)
+    _fig.suptitle(
+        f"Mean over {len(dot_stop_curves)} EN–ZH pairs: '.' vs '。' — {MODEL_ID}",
+        fontsize=8,
+    )
+    _ax.plot(np.arange(_n_st), _curve, marker="o", ms=3, label="mean over pairs")
+    _ax.plot(
+        np.arange(_n_st),
+        COS_SIM_PER_LAYER_MEAN_10_PAIRS.detach().float().cpu().numpy(),
+        ls="--",
+        alpha=0.7,
+        label="mean cos (all token pairs, all pairs)",
+    )
     _ax.set_xlabel("layer (stage index)")
     _ax.set_ylabel("cosine similarity")
-    _ax.set_title(f"Token pair: EN {en_labels[_ei_dot]!r} vs ZH {zh_labels[_zj_stop]!r} — {MODEL_ID}")
+    _ax.set_title("EN '.' vs ZH '。' (averaged) vs global mean per layer")
     _ax.set_xticks(np.linspace(0, _n_st - 1, num=min(_n_st, 12), dtype=int))
     _ax.grid(True, alpha=0.3)
-    _fig.tight_layout(rect=[0, 0, 1, 0.88])
+    _ax.legend(loc="best", fontsize=7)
+    _fig.tight_layout(rect=[0, 0, 1, 0.90])
     stonesoup.show(_fig, basename=f"{hf_repo_id_safe_stem(MODEL_ID)}_dot_vs_idc_cos_vs_layer", dpi=120)

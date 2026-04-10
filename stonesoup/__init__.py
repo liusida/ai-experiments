@@ -107,7 +107,10 @@ def load_model(ref: str):
 
 
 def show(fig=None, *, basename=None, dpi=120, format="png", emit_render_hint=True, **kwargs):
-    """Save a Matplotlib figure via :func:`outputs_dir` (optional ``basename=`` stem), print HTML, then ``plt.close(fig)``."""
+    """Save the **current** pyplot figure (default ``fig=None`` → ``plt.gcf()``), or pass ``fig=`` explicitly.
+
+    Example: ``plt.imshow(arr); stonesoup.show()`` — no need to capture or pass the figure.
+    """
     from stonesoup.experiment import show as _show
 
     return _show(fig, basename=basename, dpi=dpi, format=format, emit_render_hint=emit_render_hint, **kwargs)

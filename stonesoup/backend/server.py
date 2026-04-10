@@ -25,6 +25,7 @@ from stonesoup.experiment.paths import repo_outputs_root, repo_root as stonesoup
 
 from stonesoup.backend.hf_models import (
     ModelLoadRuntimeError,
+    clear_experiment_kernel_namespace,
     list_hf_hub_cached_model_repo_ids,
     list_loaded_models,
     list_loaded_models_globally,
@@ -34,6 +35,7 @@ from stonesoup.backend.hf_models import (
     set_unload_diag_sink,
     unload_all_models_from_all_kernels,
     unload_binding_names_from_all_kernels,
+    unload_models_from_kernel,
     unload_pool_keys_from_all_kernels,
 )
 from stonesoup.backend.kernel import Cell, Kernel, parse_cells
@@ -830,6 +832,21 @@ async def api_kernel_vars() -> dict:
         "vars": vars_rows,
         "sessions": sessions,
     }
+
+
+@app.post("/api/kernel/free-memory")
+async def api_kernel_free_memory() -> dict[str, Any]:
+    """Clear the **current** watched file's kernel: all variables and HF bindings for this session.
+
+    Shared checkpoints may stay resident if other experiments still reference them.
+    """
+    watched = _require_watched_path()
+    async with _kernel_run_lock(watched):
+        kernel = _kernel_for_watched_path(watched)
+        if kernel is None:
+            return {"ok": True, "cleared": [], "loaded_now": []}
+        result = await asyncio.to_thread(clear_experiment_kernel_namespace, kernel)
+    return {"ok": True, **result}
 
 
 @app.websocket("/ws")

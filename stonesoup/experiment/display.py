@@ -159,6 +159,11 @@ def show(
 ) -> str:
     """Save the current (or given) Matplotlib figure using :func:`outputs_dir` and print HTML.
 
+    **You do not need to pass a figure.** With ``fig=None`` (the default), the **current** pyplot
+    figure is used—whatever you last drew with ``matplotlib.pyplot`` (e.g. ``plt.imshow``,
+    ``plt.plot``, ``plt.subplots``). You never need ``fig = plt.gcf()`` or ``stonesoup.show(fig)``
+    unless you want a non-current figure explicitly.
+
     Same directory as :func:`outputs_dir`: ``outputs/<…>/<script_stem>/`` under the repo (leading
     ``experiments/`` stripped from the watched path; see :mod:`stonesoup.experiment.paths`).
     The backend serves those files under ``/outputs/…`` (Vite proxies ``/outputs`` in dev). By
@@ -180,6 +185,11 @@ def show(
 
         import matplotlib.pyplot as plt
         plt.plot([0, 1], [0, 1])
+        stonesoup.show()
+
+    Heatmap / image only::
+
+        plt.imshow(xxt)
         stonesoup.show()
 
     Returns the repo-relative POSIX path (under ``outputs/…``, same rule as :func:`outputs_dir`).
@@ -228,6 +238,11 @@ def show(
     kw = {"dpi": dpi, "bbox_inches": "tight", **savefig_kw}
     _ensure_matplotlib_font_stack()
     _apply_font_family_to_figure(fig)
+    # Ensure implicit ``plt.imshow`` / pyplot state is fully drawn before ``savefig`` (Agg backend).
+    try:
+        fig.canvas.draw()
+    except Exception:
+        pass
     # Color emoji (e.g. Noto Color Emoji) is not FT2Font-loadable here; hide noisy missing-glyph churn.
     with warnings.catch_warnings():
         warnings.filterwarnings(
