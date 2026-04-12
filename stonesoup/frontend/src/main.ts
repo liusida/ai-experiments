@@ -102,6 +102,8 @@ const EDITOR_ICON_VSCODE = `<svg class="editor-icon editor-icon--vscode" xmlns="
 const CELL_ICON_PYTHON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.35"/><text x="12" y="12" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="10" font-weight="800" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">py</text></svg>`;
 const CELL_ICON_ADD = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
 const CELL_ICON_RUN_CELL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="currentColor" d="M10.5 9.5 15.5 12l-5 2.5v-5z"/></svg>`;
+/** Expand / maximize output (arrows pointing outward). */
+const CELL_ICON_OUTPUT_MAXIMIZE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" class="cell-action-icon" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>`;
 
 /** Toolbar watch / server (``currentColor``, 16px). Reset = power (restart server). */
 const TOOLBAR_ICON_WATCH = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s4.25-7 10-7 10 7 10 7-4.25 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor"/></svg>`;
@@ -266,6 +268,7 @@ function writeCellLayoutsStore(all: Record<string, CellLayoutsFileMap>) {
 
 function resetCellsToAutoLayout(): void {
   pendingUserAutoLayout = true;
+  pendingScrollAfterAutoLayout = true;
   manualLayoutByCellIdx.clear();
   cellPositions.clear();
   lastLayoutCols = -1;
@@ -1112,6 +1115,8 @@ let lastLayoutCols = -1;
 let needsDefaultCellGrid = false;
 /** True when user clicked “automatic cell layout” — discard saved layout and run default grid once. */
 let pendingUserAutoLayout = false;
+/** True when user clicked auto-layout: after grid geometry is applied, pan viewport to default origin. */
+let pendingScrollAfterAutoLayout = false;
 
 const CELL_OUTPUTS_LS_KEY = "stonesoup_cell_outputs_v2";
 /** Legacy: keys per file were ``"0"``, ``"1"``, … (cell index). Migrated on load using current ``marker_key`` list. */
@@ -2328,6 +2333,139 @@ function applySavedCellsView(pathKey: string): boolean {
   return true;
 }
 
+/** Run after grid positions and ``relayoutCanvasBounds`` (same rAF chain as layout). */
+function consumePendingAutoLayoutScroll(): void {
+  if (!pendingScrollAfterAutoLayout) return;
+  pendingScrollAfterAutoLayout = false;
+  const g = CELLS_PAN_GUTTER_PX;
+  relayoutCanvasBounds();
+  applyCellsZoomLayout();
+  requestAnimationFrame(() => {
+    const maxL = Math.max(0, cellsEl.scrollWidth - cellsEl.clientWidth);
+    const maxT = Math.max(0, cellsEl.scrollHeight - cellsEl.clientHeight);
+    cellsEl.scrollLeft = Math.min(g, maxL);
+    cellsEl.scrollTop = Math.min(g, maxT);
+    requestAnimationFrame(() => {
+      const maxL2 = Math.max(0, cellsEl.scrollWidth - cellsEl.clientWidth);
+      const maxT2 = Math.max(0, cellsEl.scrollHeight - cellsEl.clientHeight);
+      cellsEl.scrollLeft = Math.min(g, maxL2);
+      cellsEl.scrollTop = Math.min(g, maxT2);
+      schedulePersistCellsView();
+    });
+  });
+}
+
+function scheduleScrollAfterAutoLayoutIfNeeded(): void {
+  if (!pendingScrollAfterAutoLayout) return;
+  requestAnimationFrame(() => {
+    consumePendingAutoLayoutScroll();
+  });
+}
+
+let cellOutputMaxOverlayEl: HTMLDivElement | null = null;
+/** Zoom factor for expanded output (1 = 100%). */
+let cellOutputMaxZoom = 1;
+const CELL_OUTPUT_MAX_ZOOM_MIN = 0.5;
+const CELL_OUTPUT_MAX_ZOOM_MAX = 2.5;
+const CELL_OUTPUT_MAX_ZOOM_STEP = 1.1;
+
+function onCellOutputMaxOverlayKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") closeCellOutputMaxOverlay();
+}
+
+function applyCellOutputMaxZoomToDom() {
+  const el = cellOutputMaxOverlayEl?.querySelector<HTMLElement>(".cell-output-max-scroll");
+  if (!el) return;
+  const z = Math.min(CELL_OUTPUT_MAX_ZOOM_MAX, Math.max(CELL_OUTPUT_MAX_ZOOM_MIN, cellOutputMaxZoom));
+  cellOutputMaxZoom = z;
+  el.style.zoom = String(z);
+}
+
+function cellOutputMaxZoomIn() {
+  cellOutputMaxZoom *= CELL_OUTPUT_MAX_ZOOM_STEP;
+  applyCellOutputMaxZoomToDom();
+}
+
+function cellOutputMaxZoomOut() {
+  cellOutputMaxZoom /= CELL_OUTPUT_MAX_ZOOM_STEP;
+  applyCellOutputMaxZoomToDom();
+}
+
+function ensureCellOutputMaxOverlay(): HTMLDivElement {
+  if (cellOutputMaxOverlayEl) return cellOutputMaxOverlayEl;
+  const root = document.createElement("div");
+  root.id = "cell-output-max-overlay";
+  root.className = "cell-output-max-overlay";
+  root.hidden = true;
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-modal", "true");
+  root.setAttribute("aria-labelledby", "cell-output-max-heading");
+  root.innerHTML = `
+    <div class="cell-output-max-backdrop" aria-hidden="true"></div>
+    <div class="cell-output-max-dialog">
+      <div class="cell-output-max-toolbar">
+        <h2 class="cell-output-max-heading" id="cell-output-max-heading">Output</h2>
+        <div class="cell-output-max-toolbar-actions">
+          <button type="button" class="cell-output-max-zoom btn-icon" data-cell-output-zoom="out" title="Zoom out" aria-label="Zoom out">−</button>
+          <button type="button" class="cell-output-max-zoom btn-icon" data-cell-output-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
+          <button type="button" class="cell-output-max-close btn-icon" aria-label="Close expanded output">✕</button>
+        </div>
+      </div>
+      <div class="cell-output-max-scroll">
+        <div class="cell-output-max-content"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+  const backdrop = root.querySelector(".cell-output-max-backdrop")!;
+  const closeBtn = root.querySelector(".cell-output-max-close")!;
+  backdrop.addEventListener("click", () => closeCellOutputMaxOverlay());
+  closeBtn.addEventListener("click", () => closeCellOutputMaxOverlay());
+  root.querySelectorAll<HTMLButtonElement>("[data-cell-output-zoom]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const dir = btn.dataset.cellOutputZoom;
+      if (dir === "in") cellOutputMaxZoomIn();
+      else if (dir === "out") cellOutputMaxZoomOut();
+    });
+  });
+  cellOutputMaxOverlayEl = root;
+  return root;
+}
+
+function closeCellOutputMaxOverlay() {
+  const el = cellOutputMaxOverlayEl;
+  if (!el || el.hidden) return;
+  el.hidden = true;
+  document.body.style.overflow = "";
+  document.removeEventListener("keydown", onCellOutputMaxOverlayKeydown);
+}
+
+function openCellOutputMaximize(cellIndex: number) {
+  const outEl = cellsEl.querySelector<HTMLElement>(`[data-out="${cellIndex}"]`);
+  if (!outEl) return;
+  const t = lastCells.find((c) => c.index === cellIndex)?.title?.trim();
+  const overlay = ensureCellOutputMaxOverlay();
+  const heading = overlay.querySelector(".cell-output-max-heading")!;
+  heading.textContent = t ? `Cell ${cellIndex} — ${t}` : `Cell ${cellIndex}`;
+  const contentHost = overlay.querySelector<HTMLDivElement>(".cell-output-max-content")!;
+  const raw = outEl.innerHTML.trim();
+  cellOutputMaxZoom = 8;
+  if (!raw) {
+    contentHost.innerHTML = '<p class="cell-output-max-empty">No output yet.</p>';
+  } else {
+    const wrap = document.createElement("div");
+    wrap.className = outEl.className;
+    wrap.innerHTML = outEl.innerHTML;
+    contentHost.replaceChildren(wrap);
+  }
+  applyCellOutputMaxZoomToDom();
+  overlay.hidden = false;
+  document.body.style.overflow = "hidden";
+  document.addEventListener("keydown", onCellOutputMaxOverlayKeydown);
+  overlay.querySelector<HTMLButtonElement>(".cell-output-max-close")?.focus();
+}
+
 function flattenCellIndices(steps: PipelineStep[]): number[] {
   const out: number[] = [];
   for (const s of steps) {
@@ -3175,6 +3313,7 @@ function placeDefaultGridAndPersist() {
     snapshotCurrentLayoutToManualMap();
     scheduleSaveCellLayouts();
     scheduleLayoutAndLines();
+    scheduleScrollAfterAutoLayoutIfNeeded();
   });
 }
 
@@ -3243,6 +3382,7 @@ function applyFloatingLayout() {
     }
     syncCellPositionsFromDom(nodes);
     scheduleLayoutAndLines();
+    scheduleScrollAfterAutoLayoutIfNeeded();
   });
 }
 
@@ -3332,6 +3472,7 @@ function renderCells(cells: Cell[], path: string | null) {
             ${codeControl}
             <button type="button" class="btn-chain btn-icon-cell" draggable="false" data-pipeline-add="${c.index}" title="Append to pipeline" aria-label="Append to pipeline">${CELL_ICON_ADD}</button>
             ${runInputHtml}
+            <button type="button" class="btn-icon-cell btn-output-maximize" draggable="false" data-output-maximize="${c.index}" title="Expand output (full screen)" aria-label="Expand output">${CELL_ICON_OUTPUT_MAXIMIZE}</button>
             <button type="button" class="primary btn-icon-cell" draggable="false" data-run="${c.index}" title="Run this cell" aria-label="Run this cell">${CELL_ICON_RUN_CELL}</button>
           </div>
         </div>
@@ -3377,6 +3518,12 @@ function renderCells(cells: Cell[], path: string | null) {
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       appendToPipeline(Number(btn.dataset.pipelineAdd));
+    });
+  });
+  cellsCanvas.querySelectorAll<HTMLButtonElement>("[data-output-maximize]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openCellOutputMaximize(Number(btn.dataset.outputMaximize));
     });
   });
 
