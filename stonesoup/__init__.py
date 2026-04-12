@@ -114,3 +114,24 @@ def show(fig=None, *, basename=None, dpi=120, format="png", emit_render_hint=Tru
     from stonesoup.experiment import show as _show
 
     return _show(fig, basename=basename, dpi=dpi, format=format, emit_render_hint=emit_render_hint, **kwargs)
+
+
+def display(obj, *, max_rows=30, max_cols=20, emit_render_hint=True, **kwargs):
+    """Print *obj* as an HTML table or rich HTML (pandas, ``_repr_html_``); see :func:`stonesoup.experiment.display.display`."""
+    from stonesoup.experiment.display import display as _display
+
+    return _display(obj, max_rows=max_rows, max_cols=max_cols, emit_render_hint=emit_render_hint, **kwargs)
+
+
+def mark_render_hint_emitted() -> None:
+    """Call after manually printing ``STONESOUP_RENDER_HTML`` so later ``display()`` / ``show()`` skip duplicate hints."""
+    from stonesoup.backend.render_hint_state import mark_rich_render_hint_emitted
+
+    mark_rich_render_hint_emitted()
+
+
+def html() -> None:
+    """Print ``# stonesoup:render=html`` and mark the hint emitted; use before other stdout in the cell."""
+    from stonesoup.experiment.display import emit_html_output_hint as _emit
+
+    return _emit()

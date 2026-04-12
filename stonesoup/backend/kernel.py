@@ -302,6 +302,9 @@ class Kernel:
         cancel_ctx_tok = run_cancel_event.set(cancel_event)
         try:
             try:
+                from stonesoup.backend.render_hint_state import reset_render_hint_for_cell
+
+                reset_render_hint_for_cell()
                 # Reserved pipeline names: defined every run so single-cell Run does not NameError;
                 # client inject overwrites before exec.
                 self.globals["LOOP_INDEX"] = None

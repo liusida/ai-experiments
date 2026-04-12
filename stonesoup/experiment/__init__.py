@@ -24,6 +24,8 @@ __all__ = [
     "capture_pre_block0_and_post_blocks",
     "configure_matplotlib_agg",
     "data_dir",
+    "display",
+    "emit_html_output_hint",
     "decoder_blocks",
     "encode_text_inputs",
     "ensure_pad_token_via_eos",
@@ -94,6 +96,14 @@ def __getattr__(name: str) -> _t.Any:
         from stonesoup.experiment.display import show as _show
 
         return _show
+    if name == "display":
+        from stonesoup.experiment.display import display as _display
+
+        return _display
+    if name == "emit_html_output_hint":
+        from stonesoup.experiment.display import emit_html_output_hint as _emit
+
+        return _emit
     if name == "output_url_path":
         from stonesoup.experiment.display import output_url_path as _oup
 

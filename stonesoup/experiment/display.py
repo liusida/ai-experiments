@@ -170,9 +170,11 @@ def show(
     default, stdout starts with ``# stonesoup:render=html`` for the following ``<img>`` HTML (the UI
     only reads that hint from the **first** line of the cell’s combined stdout).
 
-    If you ``print()`` before ``show()``, put ``print(stonesoup.STONESOUP_RENDER_HTML, end="")`` at
-    the **very start** of the cell so line 1 is still the hint, then use
-    ``stonesoup.show(..., emit_render_hint=False)`` for each plot so you do not repeat the hint.
+    With ``emit_render_hint=True`` (default), the hint is printed only **once per cell**; later
+    ``show()`` / ``display()`` calls omit it. If you ``print()`` other text before the first rich
+    output, put ``print(stonesoup.STONESOUP_RENDER_HTML, end="")`` at the **very start** of the cell
+    so line 1 is still the hint, or call ``stonesoup.mark_render_hint_emitted()`` after your manual
+    hint. Use ``emit_render_hint=False`` on any call to suppress the hint for that call only.
 
     If ``basename`` is set, the file is ``{basename}.{format}`` (no directory components; ``.`` in
     ``basename`` is allowed so you can pass ``foo.v2`` for ``foo.v2.png``). Otherwise a random name
@@ -265,7 +267,14 @@ def show(
     try:
         # Two-part stdout: render hint then HTML (see peelStonesoupRenderHint in the UI).
         if emit_render_hint:
-            print(STONESOUP_RENDER_HTML, end="")
+            from stonesoup.backend.render_hint_state import (
+                mark_rich_render_hint_emitted,
+                rich_render_hint_already_emitted,
+            )
+
+            if not rich_render_hint_already_emitted():
+                print(STONESOUP_RENDER_HTML, end="")
+                mark_rich_render_hint_emitted()
         print(
             f'<p class="stonesoup-show"><img src="{src}" alt="stonesoup.show()" loading="lazy" '
             f'style="max-width:100%;height:auto" /></p>',
@@ -275,3 +284,96 @@ def show(
         plt.close(fig)
 
     return rel_posix
+
+
+def _rich_html_fragment(
+    obj: Any,
+    *,
+    max_rows: int,
+    max_cols: int,
+    **to_html_kw: Any,
+) -> str | None:
+    """Return HTML string or None if no rich representation is available."""
+    repr_html = getattr(obj, "_repr_html_", None)
+    if callable(repr_html):
+        try:
+            out = repr_html()
+            if isinstance(out, str) and out.strip():
+                return out
+        except Exception:
+            pass
+
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+
+    if isinstance(obj, (pd.DataFrame, pd.Series)):
+        return obj.to_html(max_rows=max_rows, max_cols=max_cols, **to_html_kw)
+
+    try:
+        from pandas.io.formats.style import Styler
+    except ImportError:
+        Styler = None  # type: ignore[assignment,misc]
+
+    if Styler is not None and isinstance(obj, Styler):
+        try:
+            return obj.to_html(max_rows=max_rows, max_cols=max_cols, **to_html_kw)
+        except Exception:
+            return None
+
+    return None
+
+
+def display(
+    obj: Any,
+    *,
+    max_rows: int = 30,
+    max_cols: int = 20,
+    emit_render_hint: bool = True,
+    **to_html_kw: Any,
+) -> None:
+    """Print *obj* as HTML in the cell output (requires first stdout line ``# stonesoup:render=html``).
+
+    Uses ``_repr_html_()`` when present and non-empty; otherwise :class:`pandas.DataFrame` /
+    :class:`pandas.Series` use :meth:`~pandas.DataFrame.to_html` with ``max_rows`` / ``max_cols``.
+    :class:`pandas.io.formats.style.Styler` is handled via ``_repr_html_`` or ``to_html``.
+
+    If nothing applies, prints :func:`repr` only (plain text, no render hint).
+
+    With ``emit_render_hint=True`` (default), the hint is printed only **once per cell run**; later
+    ``display()`` / ``show()`` calls omit it. If you print ``STONESOUP_RENDER_HTML`` yourself first,
+    call :func:`stonesoup.mark_render_hint_emitted` so helpers do not duplicate the hint.
+
+    If you ``print()`` other text before the first rich output, emit ``STONESOUP_RENDER_HTML`` at
+    the **very start** of the cell so the first line remains the hint (same as :func:`show`).
+    """
+    from stonesoup import STONESOUP_RENDER_HTML
+    from stonesoup.backend.render_hint_state import (
+        mark_rich_render_hint_emitted,
+        rich_render_hint_already_emitted,
+    )
+
+    body = _rich_html_fragment(obj, max_rows=max_rows, max_cols=max_cols, **to_html_kw)
+    if body is None:
+        print(repr(obj))
+        return
+    wrapped = f'<div class="stonesoup-rich-html">{body}</div>'
+    if emit_render_hint and not rich_render_hint_already_emitted():
+        print(STONESOUP_RENDER_HTML, end="")
+        mark_rich_render_hint_emitted()
+    print(wrapped, flush=True)
+
+
+def emit_html_output_hint() -> None:
+    """Print ``# stonesoup:render=html`` and mark that hint as emitted for this cell run.
+
+    Use as the **first** stdout in the cell (before any other ``print``) so the UI renders the rest
+    as HTML.     Same as ``print(stonesoup.STONESOUP_RENDER_HTML, end="")`` plus
+    ``stonesoup.mark_render_hint_emitted()`` — convenient when you build HTML by hand.
+    """
+    from stonesoup import STONESOUP_RENDER_HTML
+    from stonesoup.backend.render_hint_state import mark_rich_render_hint_emitted
+
+    print(STONESOUP_RENDER_HTML, end="")
+    mark_rich_render_hint_emitted()
