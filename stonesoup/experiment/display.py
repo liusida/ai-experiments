@@ -148,6 +148,24 @@ def _apply_font_family_to_figure(fig: Any) -> None:
             pass
 
 
+def configure_matplotlib_unicode_fonts() -> None:
+    """Register bundled Noto (Latin + CJK) and disable Unicode-minus so mixed scripts render reliably.
+
+    Call once after :func:`configure_matplotlib_agg`. For tokenizer labels with Han characters,
+    also call :func:`apply_matplotlib_fonts_to_figure` on each figure before ``tight_layout`` /
+    :func:`show` so existing :class:`~matplotlib.text.Text` artists pick up the font stack.
+    """
+    import matplotlib as mpl
+
+    _ensure_matplotlib_font_stack()
+    mpl.rcParams["axes.unicode_minus"] = False
+
+
+def apply_matplotlib_fonts_to_figure(fig: Any) -> None:
+    """Re-apply the current ``font.family`` stack to all text on ``fig`` (CJK tick labels, titles)."""
+    _apply_font_family_to_figure(fig)
+
+
 def show(
     fig: Any | None = None,
     *,

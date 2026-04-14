@@ -9,6 +9,7 @@ import numpy as np
 import stonesoup
 import torch
 from ckatorch import cka_base
+from torch.nn import functional as F
 from stonesoup.experiment import (
     capture_embed_and_post_blocks,
     configure_matplotlib_agg,
@@ -267,18 +268,20 @@ def pairwise_linear_cka_block_matrix(
 
     cka_base_calls = 0
     for mi in range(len(models_order)):
-        Ai = acts_by_repo[models_order[mi]].detach().to(dtype=torch.float64)
+        Ai = acts_by_repo[models_order[mi]].detach().to(device=device, dtype=torch.float64)
         for mj in range(mi, len(models_order)):
             print(f"[cka] {models_order[mi]} vs {models_order[mj]}", flush=True)
-            Aj = acts_by_repo[models_order[mj]].detach().to(dtype=torch.float64)
+            Aj = acts_by_repo[models_order[mj]].detach().to(device=device, dtype=torch.float64)
             li_max, lj_max = layer_counts[mi], layer_counts[mj]
             for ii in range(li_max):
                 stonesoup.check_abort()
-                xi = Ai[:, ii, :]
+                # xi = Ai[:, ii, :]
+                xi = F.normalize(Ai[:, ii, :], dim=-1, eps=1e-8)
                 gi = offsets[mi] + ii
                 jj_lo = ii + 1 if mi == mj else 0
                 for jj in range(jj_lo, lj_max):
-                    xj = Aj[:, jj, :]
+                    # xj = Aj[:, jj, :]
+                    xj = F.normalize(Aj[:, jj, :], dim=-1, eps=1e-8)
                     gj = offsets[mj] + jj
                     v = cka_base(xi, xj, unbiased=True)
                     cka_base_calls += 1
@@ -343,21 +346,21 @@ def _decorate_block_heatmap(
 # Plain text on ``SENTENCES`` only (no chat template). Prefer causal LMs; for dual-purpose Hub repos,
 # load via Stonesoup with ``model_kind=causal_lm`` if the default class is vision+text.
 MODELS: list[str] = [
-    # "Qwen/Qwen2-1.5B",
-    # "Qwen/Qwen2.5-3B",
-    # # "Qwen/Qwen2.5-VL-7B-Instruct",
-    # # "Qwen/Qwen3-0.6B",
-    # # "Qwen/Qwen3-0.6B-Base",
-    # "Qwen/Qwen3-8B",
-    # # "Qwen/Qwen3-8B-Base",
-    # # "Qwen/Qwen3.5-0.8B",
-    # # "Qwen/Qwen3.5-2B",
-    # "Qwen/Qwen3.5-4B",
-    # "google/gemma-2-2b",
-    # "mistralai/Ministral-3-3B-Base-2512",
-    # "meta-llama/llama-3.2-3B",
     "openai-community/gpt2-medium",
+    "Qwen/Qwen2-1.5B",
+    "Qwen/Qwen2.5-3B",
+    # "Qwen/Qwen2.5-VL-7B-Instruct",
+    # "Qwen/Qwen3-0.6B",
+    # "Qwen/Qwen3-0.6B-Base",
+    "Qwen/Qwen3-8B",
+    # "Qwen/Qwen3-8B-Base",
+    # "Qwen/Qwen3.5-0.8B",
+    # "Qwen/Qwen3.5-2B",
+    "Qwen/Qwen3.5-4B",
     "Qwen/Qwen3.5-9B",
+    "google/gemma-2-2b",
+    "mistralai/Ministral-3-3B-Base-2512",
+    "meta-llama/llama-3.2-3B",
     "tiiuae/falcon-7b",
 ]
 

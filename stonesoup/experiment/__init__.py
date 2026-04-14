@@ -22,7 +22,9 @@ __all__ = [
     "STONESOUP_RENDER_TEXT",
     "capture_embed_and_post_blocks",
     "capture_pre_block0_and_post_blocks",
+    "apply_matplotlib_fonts_to_figure",
     "configure_matplotlib_agg",
+    "configure_matplotlib_unicode_fonts",
     "data_dir",
     "display",
     "emit_html_output_hint",
@@ -108,10 +110,18 @@ def __getattr__(name: str) -> _t.Any:
         from stonesoup.experiment.display import output_url_path as _oup
 
         return _oup
+    if name == "apply_matplotlib_fonts_to_figure":
+        from stonesoup.experiment.display import apply_matplotlib_fonts_to_figure as _amf
+
+        return _amf
     if name == "configure_matplotlib_agg":
         from stonesoup.experiment.display import configure_matplotlib_agg as _cma
 
         return _cma
+    if name == "configure_matplotlib_unicode_fonts":
+        from stonesoup.experiment.display import configure_matplotlib_unicode_fonts as _cmu
+
+        return _cmu
     if name == "hf_repo_id_safe_stem":
         from stonesoup.experiment.names import hf_repo_id_safe_stem as _stem
 

@@ -25,15 +25,12 @@ for column in df.columns:
 # %% Top score rows per subject (all cka_* metrics)
 stonesoup.html()
 
-cka_mask = df["metric"].str.startswith("cka_")
-all_subjects = df["tgt_model"].unique()
-for subject in all_subjects:
-    print(f"Subject: {subject}")
-    cka_rows = df[cka_mask & (df["tgt_model"] == subject)]
-    stonesoup.display(cka_rows.nlargest(3, "score"))
+all_metrics = df["metric"].unique()
+for metric in all_metrics:
+    print(f"Metric: {metric}")
+    metric_rows = df[df["metric"] == metric]
+    stonesoup.display(metric_rows.nlargest(3, "score"))
 
-# get unique tgt_model values from this subset (all cka_*)
-stonesoup.display(df[cka_mask].nlargest(100, "score")["tgt_model"].unique())
 
 # %% Score histograms by metric
 import math
@@ -74,7 +71,7 @@ fig.suptitle("language_all.parquet: score distribution per metric", fontsize=12,
 fig.tight_layout()
 stonesoup.show(fig, basename="language_all_score_hists_by_metric", dpi=144)
 
-# %% cka_20 score histograms by src_model (Qwen*, yeo7=Limbic)
+# %% cka_12 score histograms by src_model (yeo7=Limbic)
 import math
 
 import matplotlib.pyplot as plt
@@ -94,8 +91,7 @@ _HIST_KW = dict(
 
 PARAM_COL = "#Params (B)"
 cka20 = df[
-    (df["metric"] == "cka_20")
-    & df["src_model"].str.startswith("Qwen")
+    (df["metric"] == "cycle_knn_200")
     & (df["yeo7"] == "Limbic")
 ]
 # Same param count for every row of a model — order panels by size (billions).
@@ -121,12 +117,12 @@ for j in range(len(models_sorted), nrows * ncols):
     hr, hc = divmod(j, ncols)
     axes2[hr][hc].set_visible(False)
 fig2.suptitle(
-    "language_all: cka_20 score by src_model (Qwen*, yeo7=Limbic; sorted by #Params (B))",
+    "language_all: cka_12 score by src_model (yeo7=Limbic; sorted by #Params (B))",
     fontsize=12,
     y=1.002,
 )
 fig2.tight_layout()
-stonesoup.show(fig2, basename="language_all_cka_20_hists_by_src_model_qwen_limbic", dpi=144)
+stonesoup.show(fig2, basename="language_all_cka_12_hists_by_src_model_limbic", dpi=144)
 
 # %% Score stats by LM layer (src_feature) — Qwen, cka_20, yeo7=Limbic
 pd.set_option("display.width", None)

@@ -27,10 +27,13 @@ def encode_text_inputs(
     prompt: str,
     *,
     device: torch.device,
+    **tok_kwargs: Any,
 ) -> dict[str, Any]:
     """Encode plain text for base (non-chat) causal models: ``input_ids`` on ``device``.
 
     ``proc_or_tok`` is a Hugging Face processor or tokenizer (see :func:`inner_tokenizer`).
+    Extra ``tok_kwargs`` are forwarded to the tokenizer (e.g. ``truncation=True``,
+    ``max_length=2048``).
     """
     tok = inner_tokenizer(proc_or_tok)
     enc = tok(
@@ -38,5 +41,6 @@ def encode_text_inputs(
         return_tensors="pt",
         return_attention_mask=True,
         add_special_tokens=True,
+        **tok_kwargs,
     )
     return {k: v.to(device) for k, v in enc.items()}

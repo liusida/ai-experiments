@@ -860,6 +860,51 @@ function pickLatestFileEntry(entries: ScriptFileEntry[]): ScriptFileEntry | null
   return entries.length ? entries[0]! : null;
 }
 
+/** Newest ``mtime`` among ``*.py`` in this folder group (for ordering the folder dropdown). */
+function folderGroupMaxMtime(entries: ScriptFileEntry[]): number {
+  let m = 0;
+  for (const e of entries) {
+    if (e.mtime > m) m = e.mtime;
+  }
+  return m;
+}
+
+/**
+ * Leading ``YYYY-MM-DD`` from experiment folder names (e.g. ``2026-04-13-CKA-pitfall``).
+ * Used so the folder list follows calendar order, not “latest touched .py” (which can reorder
+ * old dated folders when any file is edited).
+ */
+const FOLDER_NAME_DATE_PREFIX = /^(\d{4}-\d{2}-\d{2})(?:-|$)/;
+
+function folderNameSortDate(folderKey: string): string | null {
+  if (folderKey === SCRIPT_PICKER_ROOT_FOLDER) return null;
+  const m = folderKey.match(FOLDER_NAME_DATE_PREFIX);
+  return m ? m[1]! : null;
+}
+
+/** Sort folder keys: dated names by embedded date desc, then mtime; undated last. */
+function compareScriptPickerFolderKeys(
+  a: string,
+  b: string,
+  groups: Map<string, ScriptFileEntry[]>,
+): number {
+  const da = folderNameSortDate(a);
+  const db = folderNameSortDate(b);
+  if (da !== null && db !== null) {
+    if (db !== da) return db.localeCompare(da);
+  } else if (da !== null && db === null) {
+    return -1;
+  } else if (da === null && db !== null) {
+    return 1;
+  }
+  const ma = folderGroupMaxMtime(groups.get(a) ?? []);
+  const mb = folderGroupMaxMtime(groups.get(b) ?? []);
+  if (mb !== ma) return mb - ma;
+  if (a === SCRIPT_PICKER_ROOT_FOLDER) return 1;
+  if (b === SCRIPT_PICKER_ROOT_FOLDER) return -1;
+  return a.localeCompare(b);
+}
+
 async function populateScriptPicker() {
   folderSelect.innerHTML = "";
   fileSelect.innerHTML = "";
@@ -891,11 +936,9 @@ async function populateScriptPicker() {
       chosenKey = pickFolderKeyForPath(want, scriptPickerGroups);
     }
 
-    const keys = [...scriptPickerGroups.keys()].sort((a, b) => {
-      if (a === SCRIPT_PICKER_ROOT_FOLDER) return 1;
-      if (b === SCRIPT_PICKER_ROOT_FOLDER) return -1;
-      return a.localeCompare(b);
-    });
+    const keys = [...scriptPickerGroups.keys()].sort((a, b) =>
+      compareScriptPickerFolderKeys(a, b, scriptPickerGroups),
+    );
 
     for (const key of keys) {
       const opt = document.createElement("option");
@@ -2450,7 +2493,7 @@ function openCellOutputMaximize(cellIndex: number) {
   heading.textContent = t ? `Cell ${cellIndex} — ${t}` : `Cell ${cellIndex}`;
   const contentHost = overlay.querySelector<HTMLDivElement>(".cell-output-max-content")!;
   const raw = outEl.innerHTML.trim();
-  cellOutputMaxZoom = 8;
+  cellOutputMaxZoom = 2;
   if (!raw) {
     contentHost.innerHTML = '<p class="cell-output-max-empty">No output yet.</p>';
   } else {
