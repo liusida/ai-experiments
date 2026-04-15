@@ -99,11 +99,11 @@ def list_hf_hub_cached_repo_ids():
     return _list_cached()
 
 
-def load_model(ref: str):
+def load_model(ref: str, *, use_offline: bool = True):
     """Re-export: (model, processor) from the shared pool; adds a binding in this kernel; Hub load if needed."""
     from stonesoup.experiment import load_model as _load_model
 
-    return _load_model(ref)
+    return _load_model(ref, use_offline=use_offline)
 
 
 def show(fig=None, *, basename=None, dpi=120, format="png", emit_render_hint=True, **kwargs):

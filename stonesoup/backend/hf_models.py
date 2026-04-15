@@ -376,6 +376,7 @@ def _load_pretrained_model(
     trust_remote_code: bool,
     torch_dtype: Any,
     device_map_value: str | None,
+    local_files_only: bool = False,
 ) -> tuple[Any, str]:
     """Pick an appropriate HF Auto class; return ``(model, resolved_branch)``.
 
@@ -391,6 +392,7 @@ def _load_pretrained_model(
     model_kwargs: dict[str, Any] = {
         "trust_remote_code": trust_remote_code,
         "torch_dtype": torch_dtype,
+        "local_files_only": local_files_only,
     }
     if device_map_value:
         model_kwargs["device_map"] = device_map_value
@@ -400,7 +402,7 @@ def _load_pretrained_model(
     if kind == "image_text":
         return AutoModelForImageTextToText.from_pretrained(repo_id, **model_kwargs), "image_text"
 
-    config = AutoConfig.from_pretrained(repo_id, trust_remote_code=trust_remote_code)
+    config = AutoConfig.from_pretrained(repo_id, trust_remote_code=trust_remote_code, local_files_only=local_files_only)
     cfg_type = type(config)
     # Prefer image+text when both mappings list the same config (e.g. Qwen3.5-4B: causal loads
     # ``Qwen3_5ForCausalLM`` (text-only); image-text loads ``Qwen3_5ForConditionalGeneration``).
@@ -598,6 +600,7 @@ def load_models_into_kernel(
     torch_dtype: str | None = None,
     trust_remote_code: bool = False,
     default_model_kind: str | None = "auto",
+    local_files_only: bool = False,
     on_stdout_chunk: Callable[[str], None] | None = None,
     on_stderr_chunk: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
@@ -657,6 +660,7 @@ def load_models_into_kernel(
                     trust_remote_code=trust_remote_code,
                     torch_dtype=resolved_dtype,
                     device_map_value=device_map_value,
+                    local_files_only=local_files_only,
                 )
                 processor = None
                 tokenizer = None
@@ -665,7 +669,7 @@ def load_models_into_kernel(
                         from transformers import AutoProcessor
 
                         processor = AutoProcessor.from_pretrained(
-                            repo_id, trust_remote_code=trust_remote_code
+                            repo_id, trust_remote_code=trust_remote_code, local_files_only=local_files_only
                         )
                         tokenizer = getattr(processor, "tokenizer", None)
                     except Exception as exc:
@@ -678,7 +682,7 @@ def load_models_into_kernel(
                         )
                 if tokenizer is None:
                     tokenizer = AutoTokenizer.from_pretrained(
-                        repo_id, trust_remote_code=trust_remote_code
+                        repo_id, trust_remote_code=trust_remote_code, local_files_only=local_files_only
                     )
                 bundle = SimpleNamespace(
                     model=model, tokenizer=tokenizer, processor=processor, repo_id=repo_id

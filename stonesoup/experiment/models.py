@@ -36,7 +36,7 @@ def list_hf_hub_cached_repo_ids() -> list[str]:
     return list_hf_hub_cached_model_repo_ids()
 
 
-def load_model(ref: str) -> tuple[Any, Any]:
+def load_model(ref: str, *, use_offline: bool = True) -> tuple[Any, Any]:
     """Return ``(model, processor)`` for a Stonesoup-managed bundle (shared in-memory weights).
 
     Checkpoints live in a **process-wide pool** (toolbar **Load** and cell loads share one copy).
@@ -49,6 +49,9 @@ def load_model(ref: str) -> tuple[Any, Any]:
     (load the repo id first in the UI or from a cell so auto-bind can run).
 
     For text-only causal LMs the second value is the tokenizer (no multimodal processor).
+
+    When ``use_offline`` is True (default), all HF Hub calls use ``local_files_only=True``
+    to skip network requests and rely on cached files only.
     """
     from stonesoup.backend.hf_models import (
         ModelLoadRuntimeError,
@@ -79,6 +82,7 @@ def load_model(ref: str) -> tuple[Any, Any]:
                 torch_dtype=None,
                 trust_remote_code=False,
                 default_model_kind="auto",
+                local_files_only=use_offline,
             )
         except (ModelLoadRuntimeError, ValueError) as err:
             raise RuntimeError(
