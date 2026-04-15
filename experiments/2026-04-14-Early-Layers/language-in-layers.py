@@ -18,7 +18,8 @@ from stonesoup.experiment import (
 configure_matplotlib_agg()
 
 # MODEL = "google/gemma-2-2b"
-MODEL = "tiiuae/falcon-7b"
+MODEL = "allenai/Olmo-3-1025-7B"
+REVISION = "stage1-step0"
 
 SECTIONS: list[tuple[str, str]] = [
     # Unrelated English prefix
@@ -104,10 +105,15 @@ def capture_embed_mid_post(
     return torch.stack(captured, dim=0), names
 
 
-model, proc = stonesoup.load_model(MODEL)
+import torch as _torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL, revision=REVISION, torch_dtype=_torch.bfloat16, device_map="auto",
+)
 model.eval()
 device = next(model.parameters()).device
-tok = inner_tokenizer(proc)
+tok = AutoTokenizer.from_pretrained(MODEL, revision=REVISION)
 ensure_pad_token_via_eos(tok)
 
 enc = tok(
@@ -188,20 +194,49 @@ def _decorate_rsm(ax: plt.Axes, *, small: bool = True) -> None:
         tl.set_fontweight("bold")
 
 
-# %% RSM for L18_post
-si = stage_names.index("L18_post")
+# %% RSM for L22_post
+from stonesoup.experiment import configure_matplotlib_unicode_fonts, apply_matplotlib_fonts_to_figure
+configure_matplotlib_unicode_fonts()
+
+token_ids = enc["input_ids"][0, :seq_len].tolist()
+token_labels = [tok.decode([tid]).replace("\n", "↵") for tid in token_ids]
+token_label_colors = []
+for t in range(seq_len):
+    si_t = token_section[t]
+    if si_t >= 0:
+        lbl = section_char_ranges[si_t][2]
+        token_label_colors.append(LANG_COLORS.get(lbl, "black"))
+    else:
+        token_label_colors.append("black")
+
+LAYER = "embed"
+si = stage_names.index(LAYER)
 normed_single = F.normalize(acts[si], dim=-1, eps=1e-8)
 sim_single = (normed_single @ normed_single.T).cpu().numpy()
-fig_size = max(8, seq_len * 0.08)
+fig_size = max(10, seq_len * 0.12)
 fig, ax = plt.subplots(figsize=(fig_size, fig_size))
 ax.imshow(sim_single, vmin=0, vmax=1, cmap="Blues", aspect="equal", interpolation="none")
-_decorate_rsm(ax, small=False)
+
+for b in section_boundaries:
+    ax.axhline(b, color="white", linewidth=0.8, alpha=0.8)
+    ax.axvline(b, color="white", linewidth=0.8, alpha=0.8)
+
+ax.set_xticks(range(seq_len))
+ax.set_xticklabels(token_labels, rotation=90, fontsize=5)
+ax.set_yticks(range(seq_len))
+ax.set_yticklabels(token_labels, fontsize=5)
+for tl, c in zip(ax.get_xticklabels(), token_label_colors):
+    tl.set_color(c)
+for tl, c in zip(ax.get_yticklabels(), token_label_colors):
+    tl.set_color(c)
+
 short = MODEL.split("/")[-1]
-ax.set_title(f"Token RSM (cosine sim) — {short} L18_post", fontsize=13, pad=10)
+ax.set_title(f"Token RSM (cosine sim) — {short} {LAYER}", fontsize=13, pad=10)
 cb = fig.colorbar(ax.images[0], ax=ax, fraction=0.03, pad=0.02)
 cb.set_label("cosine similarity", fontsize=10)
+apply_matplotlib_fonts_to_figure(fig)
 fig.tight_layout()
-stonesoup.show(fig, basename=f"rsm_L18_post_{hf_repo_id_safe_stem(MODEL)}", dpi=144)
+stonesoup.show(fig, basename=f"rsm_{LAYER}_{hf_repo_id_safe_stem(MODEL)}", dpi=144)
 
 
 # %% RSM grid (without mid-layers)
@@ -244,7 +279,7 @@ SELECTED_STAGES = [
     "L21_post", "L23_post", "L25_post",
 ]
 print(stage_names)
-SELECTED_STAGES = stage_names[::4]
+SELECTED_STAGES = [s for s in stage_names if not s.endswith("_mid")]
 # SELECTED_STAGES += ["L34_post"]
 print(SELECTED_STAGES)
 
