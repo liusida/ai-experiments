@@ -36,7 +36,7 @@ def list_hf_hub_cached_repo_ids() -> list[str]:
     return list_hf_hub_cached_model_repo_ids()
 
 
-def load_model(ref: str, *, use_offline: bool = True) -> tuple[Any, Any]:
+def load_model(ref: str, *, use_offline: bool = True, torch_dtype: str | None = None) -> tuple[Any, Any]:
     """Return ``(model, processor)`` for a Stonesoup-managed bundle (shared in-memory weights).
 
     Checkpoints live in a **process-wide pool** (toolbar **Load** and cell loads share one copy).
@@ -52,6 +52,11 @@ def load_model(ref: str, *, use_offline: bool = True) -> tuple[Any, Any]:
 
     When ``use_offline`` is True (default), all HF Hub calls use ``local_files_only=True``
     to skip network requests and rely on cached files only.
+
+    ``torch_dtype`` selects the weight precision for a **new** load (e.g. ``"bfloat16"``).
+    Accepted strings: ``auto``, ``float16``, ``bfloat16``, ``float32`` (and aliases).
+    ``None`` keeps the existing default (float16 on CUDA, float32 on CPU).
+    Ignored when the checkpoint is already resident in the pool.
     """
     from stonesoup.backend.hf_models import (
         ModelLoadRuntimeError,
@@ -79,7 +84,7 @@ def load_model(ref: str, *, use_offline: bool = True) -> tuple[Any, Any]:
                 kernel,
                 items=[{"repo_id": ref_stripped, "name": None, "model_kind": None}],
                 device_map="auto",
-                torch_dtype=None,
+                torch_dtype=torch_dtype,
                 trust_remote_code=False,
                 default_model_kind="auto",
                 local_files_only=use_offline,
