@@ -45,7 +45,7 @@ def make_inputs(tokenizer, prompts, device="cuda"):
 
 # %% Config
 MODEL_NAME = "EleutherAI/pythia-12b"
-N_SAMPLES = 1_000
+N_SAMPLES = 5 # 1_000 # a simple run for the taste, increase for more comprehensive comparison
 LAYER_STRIDE = 1
 PILE_FILTER_MAX_WORDS = 250
 PILE_FILTER_MAX_CHARS = 2000
@@ -93,7 +93,12 @@ num_layers = len(decoder_blocks(model))
 
 mt = SimpleNamespace(model=model, tokenizer=tokenizer, device=device, num_layers=num_layers)
 
-layer_indices = list(range(0, num_layers, LAYER_STRIDE))
+# layer_indices includes -1 (embedding) for alignment:
+# x-axis "layer" L means TI uses hidden_states[L+1], cut starts at layer L+1.
+# L=-1: TI uses embedding (hidden_states[0]), cut starts at layer 0 (all layers cut).
+layer_indices = list(range(-1, num_layers, LAYER_STRIDE))
+if num_layers - 1 not in layer_indices:
+    layer_indices.append(num_layers - 1)
 print(
     f"model={MODEL_NAME} layers={num_layers} device={device} "
     f"layer_indices (stride={LAYER_STRIDE}): {layer_indices}",
@@ -146,8 +151,12 @@ for sample_i in tqdm(range(N_SAMPLES), desc="compare samples"):
 
         # --- Token Identity ---
         hidden_rep = output_orig["hidden_states"][layer + 1][0][position_source]
-        skip_final_ln = layer == num_layers - 1
-        hook_mod = model.gpt_neox.final_layer_norm if skip_final_ln else model.gpt_neox.layers[layer]
+        if layer == -1:
+            hook_mod = model.gpt_neox.embed_in
+        elif layer == num_layers - 1:
+            hook_mod = model.gpt_neox.final_layer_norm
+        else:
+            hook_mod = model.gpt_neox.layers[layer]
 
         def _post_patch_hs(module, input, output):
             assert isinstance(output, torch.Tensor) and output.dim() == 3
@@ -163,19 +172,21 @@ for sample_i in tqdm(range(N_SAMPLES), desc="compare samples"):
         p_ti = dist_orig[answer_ti].float().clamp(min=SURPRISAL_PROB_MIN)
         surp_ti = float((-torch.log(p_ti)).item())
 
-        # --- Attention Cut ---
-        abs_cut_pos = seq_len + POSITION_TARGET  # cut at last position (same as token identity eval pos)
-        hook_handles = _install_cut_hooks(mt.model, target_layer_idx=layer, cut_pos=position_source)
-        out_cut = mt.model(**inp_source)
-        for h in hook_handles:
-            h.remove()
+        # --- Attention Cut (aligned: cut from layer+1 onward, so layers 0..layer run fully) ---
+        if layer == num_layers - 1:
+            prec_cut = True
+            surp_cut = float((-torch.log(dist_orig.float().max().clamp(min=SURPRISAL_PROB_MIN))).item())
+        else:
+            hook_handles = _install_cut_hooks(mt.model, target_layer_idx=layer + 1, cut_pos=position_source)
+            out_cut = mt.model(**inp_source)
+            for h in hook_handles:
+                h.remove()
 
-        dist_cut = torch.softmax(out_cut.logits[0, position_source, :], dim=0)
-        _, answer_cut = torch.max(dist_cut, dim=0)
-        prec_cut = bool((answer_cut == answer_t_orig).item())
-        answer_cut_id = int(answer_cut.to(torch.long).item())
-        p_cut = dist_orig.float()[answer_cut_id].clamp(min=SURPRISAL_PROB_MIN)
-        surp_cut = float((-torch.log(p_cut)).item())
+            dist_cut = torch.softmax(out_cut.logits[0, position_source, :], dim=0)
+            _, answer_cut = torch.max(dist_cut, dim=0)
+            prec_cut = bool((answer_cut == answer_t_orig).item())
+            p_cut = dist_orig.float()[int(answer_cut.to(torch.long).item())].clamp(min=SURPRISAL_PROB_MIN)
+            surp_cut = float((-torch.log(p_cut)).item())
 
         records.append(
             {
