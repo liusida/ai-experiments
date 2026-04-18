@@ -415,7 +415,7 @@ def _load_pretrained_model(
 
 def _resolve_torch_dtype(torch: Any, raw: str | None) -> Any:
     if raw is None or not raw.strip():
-        return torch.float16 if torch.cuda.is_available() else torch.float32
+        return "auto"
     key = raw.strip().lower()
     mapping = {
         "auto": "auto",

@@ -311,7 +311,31 @@ def _rich_html_fragment(
     max_cols: int,
     **to_html_kw: Any,
 ) -> str | None:
-    """Return HTML string or None if no rich representation is available."""
+    """Return HTML string or None if no rich representation is available.
+
+    :class:`pandas.DataFrame` / :class:`pandas.Series` and :class:`pandas.io.formats.style.Styler`
+    are rendered with :meth:`~pandas.DataFrame.to_html` so ``max_rows`` / ``max_cols`` are honored.
+    They must be handled *before* generic ``_repr_html_``: pandas' HTML repr ignores those limits
+    and follows global display options instead.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        pd = None  # type: ignore[assignment]
+
+    if pd is not None:
+        if isinstance(obj, (pd.DataFrame, pd.Series)):
+            return obj.to_html(max_rows=max_rows, max_cols=max_cols, **to_html_kw)
+        try:
+            from pandas.io.formats.style import Styler
+        except ImportError:
+            Styler = None  # type: ignore[assignment,misc]
+        if Styler is not None and isinstance(obj, Styler):
+            try:
+                return obj.to_html(max_rows=max_rows, max_cols=max_cols, **to_html_kw)
+            except Exception:
+                pass
+
     repr_html = getattr(obj, "_repr_html_", None)
     if callable(repr_html):
         try:
@@ -320,25 +344,6 @@ def _rich_html_fragment(
                 return out
         except Exception:
             pass
-
-    try:
-        import pandas as pd
-    except ImportError:
-        return None
-
-    if isinstance(obj, (pd.DataFrame, pd.Series)):
-        return obj.to_html(max_rows=max_rows, max_cols=max_cols, **to_html_kw)
-
-    try:
-        from pandas.io.formats.style import Styler
-    except ImportError:
-        Styler = None  # type: ignore[assignment,misc]
-
-    if Styler is not None and isinstance(obj, Styler):
-        try:
-            return obj.to_html(max_rows=max_rows, max_cols=max_cols, **to_html_kw)
-        except Exception:
-            return None
 
     return None
 
@@ -353,9 +358,9 @@ def display(
 ) -> None:
     """Print *obj* as HTML in the cell output (requires first stdout line ``# stonesoup:render=html``).
 
-    Uses ``_repr_html_()`` when present and non-empty; otherwise :class:`pandas.DataFrame` /
-    :class:`pandas.Series` use :meth:`~pandas.DataFrame.to_html` with ``max_rows`` / ``max_cols``.
-    :class:`pandas.io.formats.style.Styler` is handled via ``_repr_html_`` or ``to_html``.
+    :class:`pandas.DataFrame`, :class:`pandas.Series`, and :class:`pandas.io.formats.style.Styler`
+    use :meth:`~pandas.DataFrame.to_html` with ``max_rows`` / ``max_cols``. Other objects use
+    ``_repr_html_()`` when present and non-empty.
 
     If nothing applies, prints :func:`repr` only (plain text, no render hint).
 
