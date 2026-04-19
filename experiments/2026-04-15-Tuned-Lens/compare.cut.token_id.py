@@ -93,9 +93,9 @@ num_layers = len(decoder_blocks(model))
 
 mt = SimpleNamespace(model=model, tokenizer=tokenizer, device=device, num_layers=num_layers)
 
-# layer_indices includes -1 (embedding) for alignment:
-# x-axis "layer" L means TI uses hidden_states[L+1], cut starts at layer L+1.
-# L=-1: TI uses embedding (hidden_states[0]), cut starts at layer 0 (all layers cut).
+# Both methods decode h^(L) — the residual-stream state after layer L — through
+# the remaining layers with the original attention at that position disconnected.
+# L=-1 means the embedding (before any layer); L=num_layers-1 is the final layer.
 layer_indices = list(range(-1, num_layers, LAYER_STRIDE))
 if num_layers - 1 not in layer_indices:
     layer_indices.append(num_layers - 1)
