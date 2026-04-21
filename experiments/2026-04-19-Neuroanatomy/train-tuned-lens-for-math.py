@@ -36,9 +36,9 @@ WIKIPEDIA_REPO = "wikimedia/wikipedia"
 WIKIPEDIA_ZH_CONFIG = "20231101.zh"
 
 # Corpus sizes (streaming Wikipedia zh; sliced GSM8K / pile); RYS JSONs are always fully included.
-WIKIPEDIA_ZH_ROWS = 30
-GSM8K_TRAIN_ROWS = 600
-PILE_TRAIN_ROWS = 150
+WIKIPEDIA_ZH_ROWS = 60
+GSM8K_TRAIN_ROWS = 2000
+PILE_TRAIN_ROWS = 50
 # One epoch == ``len(loader)`` steps (each step is one batch of ``BATCH_SIZE`` chunks). Increase for more passes.
 TRAIN_EPOCHS = 1
 
@@ -48,11 +48,13 @@ RYS_JSON_REL = [
     "data/rys-dataset/math_16.json",
 ]
 
-SEQ_LEN = 256
-BATCH_SIZE = 4
+SEQ_LEN = 128
+BATCH_SIZE = 2
 LR = 1e-3
 GRAD_CLIP = 1.0
 RANDOM_SEED = 0
+# If True, KL is averaged only over positions 1..L-1 (omit attention-sink / atypical first index).
+SKIP_FIRST_TOKEN = True
 
 # %% Load model and detect architecture
 model, processor = stonesoup.load_model(MODEL_ID)
@@ -256,14 +258,19 @@ def decode(h: torch.Tensor) -> torch.Tensor:
 
 def kl_loss(final_logits: torch.Tensor, lens_logits: torch.Tensor) -> torch.Tensor:
     """KL(target || pred) with frozen target distribution (detach final logits)."""
-    target_lp = F.log_softmax(final_logits.detach().float(), dim=-1)
+    fl, ll = final_logits, lens_logits
+    if SKIP_FIRST_TOKEN and fl.shape[1] > 1:
+        fl = fl[:, 1:, :]
+        ll = ll[:, 1:, :]
+    target_lp = F.log_softmax(fl.detach().float(), dim=-1)
     target_p = target_lp.exp()
-    pred_lp = F.log_softmax(lens_logits.float(), dim=-1)
+    pred_lp = F.log_softmax(ll.float(), dim=-1)
     return (target_p * (target_lp - pred_lp)).sum(dim=-1).mean()
 
 
 lens = TunedLens(n_probed, d_model).to(device)
 print(f"TunedLens: {n_probed} translators, {sum(p.numel() for p in lens.parameters()):,} params", flush=True)
+print(f"kl_loss: SKIP_FIRST_TOKEN={SKIP_FIRST_TOKEN}", flush=True)
 
 # %% Train
 torch.set_grad_enabled(True)
@@ -319,6 +326,7 @@ save_path = stonesoup.script_dir() / f"tuned_lens_math_{_stem}.pt"
 torch.save(
     {
         "model_id": MODEL_ID,
+        "skip_first_token": SKIP_FIRST_TOKEN,
         "num_hidden_layers_config": n_layers,
         "n_probed_layers": n_probed,
         "n_hidden_states_forward": n_hidden_total,

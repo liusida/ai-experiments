@@ -5,6 +5,10 @@
 - ``stonesoup.experiment``: helpers for experiment code running *inside* a Stonesoup cell.
 
 Inside a cell, call :func:`check_abort` periodically so the UI **Abort** button can stop long loops.
+
+Rich tables and HTML: use :func:`display` (same as ``stonesoup.experiment.display.display``) for pandas
+DataFrames and objects with ``_repr_html_``; use :func:`show` for matplotlib figures; :func:`html` prints
+the HTML render hint only.
 """
 
 from __future__ import annotations
@@ -18,6 +22,32 @@ from stonesoup.backend.kernel import (
 )
 
 __version__ = "0.1.0"
+
+__all__ = [
+    "STONESOUP_RENDER_AUTO",
+    "STONESOUP_RENDER_HTML",
+    "STONESOUP_RENDER_MARKDOWN",
+    "STONESOUP_RENDER_MD",
+    "STONESOUP_RENDER_TEXT",
+    "RunAborted",
+    "StonesoupRunCancelled",
+    "check_abort",
+    "data_dir",
+    "display",
+    "html",
+    "list_hf_hub_cached_repo_ids",
+    "list_loaded_models",
+    "list_loaded_models_globally",
+    "load_model",
+    "mark_render_hint_emitted",
+    "outputs_dir",
+    "plot_dir",
+    "repo_root",
+    "script_dir",
+    "script_path",
+    "show",
+    "stonesoup_render_prefix",
+]
 
 # First stdout line: UI strips it. Default output is plain text; use HTML/MD lines only for rich panes.
 # See EXPERIMENT_PYTHON.md (stdout render hint).
