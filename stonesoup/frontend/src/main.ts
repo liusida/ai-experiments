@@ -870,11 +870,12 @@ function folderGroupMaxMtime(entries: ScriptFileEntry[]): number {
 }
 
 /**
- * Leading ``YYYY-MM-DD`` from experiment folder names (e.g. ``2026-04-13-CKA-pitfall``).
+ * Leading ``YYYY-MM-DD`` from experiment folder names (e.g. ``2026-04-13-CKA-pitfall`` or
+ * ``2026-04-19 MIB`` with a space after the date).
  * Used so the folder list follows calendar order, not “latest touched .py” (which can reorder
  * old dated folders when any file is edited).
  */
-const FOLDER_NAME_DATE_PREFIX = /^(\d{4}-\d{2}-\d{2})(?:-|$)/;
+const FOLDER_NAME_DATE_PREFIX = /^(\d{4}-\d{2}-\d{2})(?:-|\s|$)/;
 
 function folderNameSortDate(folderKey: string): string | null {
   if (folderKey === SCRIPT_PICKER_ROOT_FOLDER) return null;
