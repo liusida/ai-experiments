@@ -322,7 +322,7 @@ print("Training complete.", flush=True)
 
 # %% Save checkpoint
 _stem = hf_repo_id_safe_stem(MODEL_ID)
-save_path = stonesoup.script_dir() / f"tuned_lens_math_{_stem}.pt"
+save_path = stonesoup.outputs_dir() / f"tuned_lens_math_{_stem}.pt"
 torch.save(
     {
         "model_id": MODEL_ID,

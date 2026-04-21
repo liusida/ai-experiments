@@ -30,6 +30,19 @@ from stonesoup.experiment import (
 configure_matplotlib_agg()
 
 
+def _tuned_lens_train_outputs_dir() -> Path:
+    train_py = Path(__file__).resolve().with_name("train-tuned-lens-for-math.py")
+    root = stonesoup.repo_root()
+    rel = train_py.relative_to(root)
+    parts = rel.parts
+    if parts[:1] == ("experiments",):
+        parts = parts[1:]
+    stem = Path(*parts).with_suffix("") if parts else rel.with_suffix("")
+    d = root / "outputs" / stem
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _get_text_layer_owner(base_model: nn.Module) -> tuple[nn.Module, str]:
     if hasattr(base_model, "model") and hasattr(base_model.model, "layers"):
         return base_model.model, "layers"
@@ -499,7 +512,7 @@ MODEL_ID = "Qwen/Qwen3.5-9B"
 # CELL_INPUT: relayer mode — 0 skip block, 1 baseline, 2 one overlap, 3+ extra repeats
 RELAYER_EXEC_TIMES = int(str(globals().get("CELL_INPUT", "") or "").strip() or "0")
 RELAYER_BLOCK: tuple[int, int] = (13, 15)
-TUNED_LENS_PT = stonesoup.script_dir() / f"tuned_lens_math_{hf_repo_id_safe_stem(MODEL_ID)}.pt"
+TUNED_LENS_PT = _tuned_lens_train_outputs_dir() / f"tuned_lens_math_{hf_repo_id_safe_stem(MODEL_ID)}.pt"
 DATA_PATH = data_dir() / "rys-dataset" / "mid_math_16.json"
 FIRST_KEY = "4"
 
