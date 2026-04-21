@@ -836,9 +836,10 @@ async def api_kernel_vars() -> dict:
 
 @app.post("/api/kernel/free-memory")
 async def api_kernel_free_memory() -> dict[str, Any]:
-    """Clear the **current** watched file's kernel: all variables and HF bindings for this session.
+    """Clear the **current** watched file's kernel user globals; HF bindings are kept.
 
-    Shared checkpoints may stay resident if other experiments still reference them.
+    Toolbar-loaded model/tokenizer names stay in the namespace; use ``POST /api/models/unload``
+    to release weights from the shared pool.
     """
     watched = _require_watched_path()
     async with _kernel_run_lock(watched):

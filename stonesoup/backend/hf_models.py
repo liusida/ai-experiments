@@ -841,19 +841,14 @@ def unload_models_from_kernel(kernel: Kernel, *, names: list[str] | None = None)
 
 
 def clear_experiment_kernel_namespace(kernel: Kernel) -> dict[str, Any]:
-    """Remove every name from this kernel's globals except core interpreter keys.
+    """Remove user names from this kernel's globals except builtins and HF bindings.
 
-    Hugging Face bindings for *this* kernel are torn down via :func:`unload_models_from_kernel`
-    so managed state and shared-pool refcounts stay consistent. Weights may remain in the process
-    pool if another kernel or refcount still holds the same checkpoint.
+    Primary bundle names (``state.bundles``) and convenience aliases (``model``, ``tokenizer``, …)
+    are kept so namespace, managed model state, and shared-pool refcounts stay aligned. Use
+    toolbar unload or :func:`unload_models_from_kernel` to drop weights.
     """
     state = _state_for(kernel)
-    convenience_before = sorted(state.convenience_aliases)
-    hf = unload_models_from_kernel(kernel, names=None)
-    cleared: list[str] = [str(x["name"]) for x in hf.get("unloaded", []) if x.get("name")]
-    for n in convenience_before:
-        if n not in cleared:
-            cleared.append(n)
+    preserve: set[str] = set(state.bundles.keys()) | set(state.convenience_aliases)
     protected = {
         "__name__",
         "__builtins__",
@@ -864,8 +859,11 @@ def clear_experiment_kernel_namespace(kernel: Kernel) -> dict[str, Any]:
         "__file__",
         "__cached__",
     }
+    cleared: list[str] = []
     for key in list(kernel.globals.keys()):
         if key in protected or key.startswith("__"):
+            continue
+        if key in preserve:
             continue
         del kernel.globals[key]
         cleared.append(key)

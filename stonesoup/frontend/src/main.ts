@@ -386,7 +386,7 @@ app.innerHTML = `
         <div class="kernel-vars-toolbar stonesoup-dock-toolbar">
           <span class="kernel-vars-title stonesoup-dock-title">Variables</span>
           <button type="button" class="btn-icon" id="kernel-vars-refresh" title="Refresh list">⟳</button>
-          <button type="button" class="btn-icon" id="kernel-vars-free-memory" title="Clear all variables for this experiment (including model/tokenizer bindings in this kernel). Shared checkpoints may stay in memory if still used elsewhere." aria-label="Clear all variables (this experiment)">${TOOLBAR_ICON_FREE_MEMORY}</button>
+          <button type="button" class="btn-icon" id="kernel-vars-free-memory" title="Clear user variables for this experiment; toolbar-loaded model/tokenizer bindings are kept. Use toolbar unload to free weights." aria-label="Clear all variables (this experiment)">${TOOLBAR_ICON_FREE_MEMORY}</button>
           <button type="button" class="btn-icon" id="kernel-vars-collapse" title="Hide variables">▾</button>
         </div>
         <div class="kernel-vars-scroll stonesoup-dock-body">
