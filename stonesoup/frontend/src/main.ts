@@ -341,6 +341,10 @@ app.innerHTML = `
     <div class="toolbar-watch">
       <span class="ws-dot" id="ws-dot" title="Live reload: disconnected" aria-label="WebSocket disconnected"></span>
       <span class="script-picker">
+        <label class="script-picker-show-all" title="Off: five most recent folders (plus current folder if it is not among them). On: every folder.">
+          <input type="checkbox" id="folder-show-all" />
+          <span>All</span>
+        </label>
         <select id="folder-select" title="Experiment folder under list root" aria-label="Folder"></select>
         <select id="file-select" title="Python file in folder" aria-label="File"></select>
       </span>
@@ -412,6 +416,7 @@ app.innerHTML = `
   <div id="status-toast" class="status-toast" role="status" aria-live="polite"></div>
 `;
 
+const folderShowAllCheckbox = app.querySelector<HTMLInputElement>("#folder-show-all")!;
 const folderSelect = app.querySelector<HTMLSelectElement>("#folder-select")!;
 const fileSelect = app.querySelector<HTMLSelectElement>("#file-select")!;
 const pathInput = app.querySelector<HTMLInputElement>("#path-input")!;
@@ -906,16 +911,93 @@ function compareScriptPickerFolderKeys(
   return a.localeCompare(b);
 }
 
+/** Max folder rows when “All” is off (same order as ``compareScriptPickerFolderKeys``). */
+const FOLDER_DROPDOWN_SHORT_MAX = 5;
+
+function sortedScriptPickerFolderKeys(groups: Map<string, ScriptFileEntry[]>): string[] {
+  return [...groups.keys()].sort((a, b) => compareScriptPickerFolderKeys(a, b, groups));
+}
+
+function folderDropdownShowAll(): boolean {
+  return folderShowAllCheckbox.checked;
+}
+
+/**
+ * Repopulate folder ``<select>``. Short mode = five most recent folders; if the watched path’s
+ * folder is outside that set, it is prepended so the control stays valid (path unchanged).
+ */
+function fillFolderSelectOptions(sortedKeys: string[], selectedFolderKey: string | null) {
+  folderSelect.innerHTML = "";
+  let keysToShow: string[];
+  if (folderDropdownShowAll() || sortedKeys.length <= FOLDER_DROPDOWN_SHORT_MAX) {
+    keysToShow = sortedKeys;
+  } else {
+    const head = sortedKeys.slice(0, FOLDER_DROPDOWN_SHORT_MAX);
+    if (
+      selectedFolderKey !== null &&
+      sortedKeys.includes(selectedFolderKey) &&
+      !head.includes(selectedFolderKey)
+    ) {
+      keysToShow = [selectedFolderKey, ...head];
+    } else {
+      keysToShow = head;
+    }
+  }
+  for (const key of keysToShow) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = folderPickerLabel(key);
+    folderSelect.appendChild(opt);
+  }
+  const listIsTruncated =
+    !folderDropdownShowAll() && sortedKeys.length > FOLDER_DROPDOWN_SHORT_MAX;
+  if (listIsTruncated && sortedKeys.length > keysToShow.length) {
+    const ell = document.createElement("option");
+    ell.disabled = true;
+    ell.value = "";
+    ell.textContent = "...";
+    ell.title = "More folders exist — turn on “All” to see the full list (visual only)";
+    folderSelect.appendChild(ell);
+  }
+}
+
+/** Rebuild folder + file selects after toggling “All” (checkbox only; does not change watch path). */
+function refreshFolderSelectAfterShowAllToggle() {
+  const sortedKeys = sortedScriptPickerFolderKeys(scriptPickerGroups);
+  const want = pathInput.value.trim().replace(/\\/g, "/");
+  const restore = want ? pickFolderKeyForPath(want, scriptPickerGroups) : null;
+  fillFolderSelectOptions(sortedKeys, restore);
+  let effectiveRestore: string | null = restore;
+  if (effectiveRestore === null && sortedKeys.length > 0) {
+    effectiveRestore = sortedKeys[0]!;
+  }
+  if (effectiveRestore !== null) {
+    folderSelect.value = effectiveRestore;
+    populateFileOptions(effectiveRestore);
+    const entries = scriptPickerGroups.get(effectiveRestore) ?? [];
+    const match = want ? entries.find((e) => e.rel === want) : null;
+    if (match) {
+      fileSelect.value = match.rel;
+    } else if (entries.length > 0) {
+      const pick = pickLatestFileEntry(entries)!;
+      fileSelect.value = pick.rel;
+      pathInput.value = pick.rel;
+    }
+  }
+}
+
 async function populateScriptPicker() {
   folderSelect.innerHTML = "";
   fileSelect.innerHTML = "";
 
   if (!scriptPickerDir) {
+    folderShowAllCheckbox.disabled = true;
     folderSelect.disabled = true;
     fileSelect.disabled = true;
     return;
   }
 
+  folderShowAllCheckbox.disabled = false;
   folderSelect.disabled = false;
   fileSelect.disabled = false;
   try {
@@ -937,16 +1019,7 @@ async function populateScriptPicker() {
       chosenKey = pickFolderKeyForPath(want, scriptPickerGroups);
     }
 
-    const keys = [...scriptPickerGroups.keys()].sort((a, b) =>
-      compareScriptPickerFolderKeys(a, b, scriptPickerGroups),
-    );
-
-    for (const key of keys) {
-      const opt = document.createElement("option");
-      opt.value = key;
-      opt.textContent = folderPickerLabel(key);
-      folderSelect.appendChild(opt);
-    }
+    const keys = sortedScriptPickerFolderKeys(scriptPickerGroups);
 
     if (chosenKey === null && keys.length > 0) {
       const latest = pickGloballyLatestEntry(scriptPickerGroups);
@@ -954,7 +1027,10 @@ async function populateScriptPicker() {
         ? pickFolderKeyForPath(latest.rel, scriptPickerGroups)
         : keys[0]!;
     }
+
+    fillFolderSelectOptions(keys, chosenKey);
     if (keys.length === 0) {
+      folderShowAllCheckbox.disabled = true;
       folderSelect.disabled = true;
       fileSelect.disabled = true;
     } else if (chosenKey !== null) {
@@ -978,10 +1054,15 @@ async function populateScriptPicker() {
     err.textContent = "(could not list folder)";
     err.disabled = true;
     folderSelect.appendChild(err);
+    folderShowAllCheckbox.disabled = true;
     folderSelect.disabled = true;
     fileSelect.disabled = true;
   }
 }
+
+folderShowAllCheckbox.addEventListener("change", () => {
+  refreshFolderSelectAfterShowAllToggle();
+});
 
 folderSelect.addEventListener("change", () => {
   const key = folderSelect.value;

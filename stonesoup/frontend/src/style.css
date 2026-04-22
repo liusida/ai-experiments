@@ -143,6 +143,22 @@ body {
   min-width: 0;
 }
 
+.toolbar .script-picker .script-picker-show-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: inherit;
+  cursor: pointer;
+  user-select: none;
+  color: var(--vs-fg-dim);
+}
+
+.toolbar .script-picker .script-picker-show-all input {
+  margin: 0;
+}
+
 .toolbar .script-picker select#folder-select {
   flex: 0 1 auto;
   width: auto;
